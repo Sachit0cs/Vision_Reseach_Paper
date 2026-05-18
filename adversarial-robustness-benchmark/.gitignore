@@ -1,0 +1,25 @@
+# Datasets — track only the committed clean benchmark set.
+# The parquet cache, CIFAR-100 and future poisoned sets stay ignored.
+data/*
+!data/.gitkeep
+!data/clean/
+
+# Generated outputs
+results/*
+!results/.gitkeep
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+
+# Notebook checkpoints
+.ipynb_checkpoints/
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/

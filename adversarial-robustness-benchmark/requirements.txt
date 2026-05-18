@@ -1,0 +1,37 @@
+# Core dependencies for the Adversarial Robustness Benchmark.
+#
+# Install:
+#   pip install -r requirements.txt
+#
+# AutoAttack and RobustBench are installed SEPARATELY — their pinned
+# dependencies break pip's resolver on managed environments such as Kaggle.
+# They are only needed from Phase 1 (attack generation) onward:
+#   pip install --no-deps -r requirements-attacks.txt
+
+# Core deep learning
+torch>=2.0
+torchvision>=0.15
+timm>=0.9
+transformers>=4.30          # for CLIP
+
+# Attacks (resolver-friendly)
+torchattacks>=3.5           # FGSM, PGD, Square, etc.
+
+# Data
+numpy
+pillow
+opencv-python
+pandas
+pyarrow                     # reading the ImageNet-val parquet mirror
+huggingface-hub             # dataset download helper
+gdown                       # RobustBench model-zoo downloads
+
+# Science / reporting
+scikit-learn
+matplotlib
+seaborn
+pyyaml
+tqdm
+
+# Testing
+pytest

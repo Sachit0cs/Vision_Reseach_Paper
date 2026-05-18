@@ -1,0 +1,47 @@
+# Global configuration for the Adversarial Robustness Benchmark.
+# Every script and module reads paths, the seed, and hyperparameters from here.
+
+# Reproducibility: fixed across torch, numpy and Python random.
+seed: 42
+
+paths:
+  data_root: data
+  clean_set: data/clean          # original (unmodified) benchmark images
+  poisoned_set: data/poisoned    # generated later (Phase 1) — not built yet
+  hf_cache: data/_hf_cache       # downloaded parquet shards
+  results: results
+
+# Benchmark dataset — an ImageNet-validation subset.
+dataset:
+  benchmark_size: 1000           # total images; expandable to 5000 later
+  per_class: 1                   # class-balanced: images per ImageNet class
+  num_classes: 1000
+  # Public, non-gated ImageNet-1k mirror (images pre-resized to 256px).
+  hf_repo: evanarlian/imagenet_1k_resized_256
+  hf_split: val
+  # CIFAR-100 is used only in Phase 4 (defense fine-tuning); torchvision downloads it.
+  train_dataset: cifar100
+
+# Primary threat model: L-infinity. Epsilon lives in [0,1] pixel space.
+attack:
+  threat_model: Linf
+  epsilon: 0.03137254901960784    # 8/255
+  pgd_step: 0.00784313725490196   # 2/255
+  pgd_iters: 20
+  fgsm_epsilon: 0.03137254901960784
+
+# The 7 benchmarked architectures (short keys -> wrappers in models/classifiers.py).
+models:
+  - resnet50
+  - vgg16
+  - convnext_tiny
+  - vit_b_16
+  - swin_t
+  - efficientnet_b0
+  - clip_vit_b16
+
+# RobustBench adversarially-trained model — the robustness-ceiling reference.
+robustbench_model:
+  name: Salman2020Do_R50
+  threat_model: Linf
+  dataset: imagenet

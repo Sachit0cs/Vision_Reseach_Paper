@@ -1,0 +1,13 @@
+# AutoAttack + RobustBench.
+#
+# These ship pinned dependencies that conflict with pip's resolver on managed
+# environments (e.g. Kaggle), so install them WITHOUT dependency resolution —
+# their real runtime deps (torch, torchvision, numpy, requests, gdown) are
+# already covered by requirements.txt:
+#
+#   pip install --no-deps -r requirements-attacks.txt
+#
+# Needed from Phase 1 (attack generation) onward — not required for Phase 0.
+
+autoattack @ git+https://github.com/fra31/auto-attack
+robustbench @ git+https://github.com/RobustBench/robustbench.git
