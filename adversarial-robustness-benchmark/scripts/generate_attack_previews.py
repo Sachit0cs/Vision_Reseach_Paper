@@ -1,12 +1,21 @@
-"""CLI: export adversarial images to disk for inspection.
+"""CLI: export adversarial ("poisoned") images to disk for inspection.
+
+WHAT THIS FILE IS (read first):
+  * It is the GENERAL attack-export tool. It imports the `attacks/` module and
+    writes the poisoned image dataset for the attacks it covers. Today it
+    covers the gradient attacks (FGSM, PGD, AutoAttack, Square); patch,
+    typographic, corruptions and transfer extend the SAME folder structure
+    later without changing the design.
+  * It stores the poisoned images in a gitignored folder (`attack_previews/`)
+    with a fixed, per-attack directory structure (see the layout below).
+  * It is NOT part of the benchmark. `scripts/run_benchmark.py` /
+    `evaluation/pipeline.py` regenerate adversarial images in memory at run
+    time and never read this folder. This exporter exists ONLY so the exact
+    images the benchmark uses can be browsed or shown to others — the folder
+    is fully regenerable and safe to delete.
 
 Generates the per-model gradient-attack images (FGSM, PGD, AutoAttack, Square)
-and saves them as image files, so the exact images the benchmark runs on can be
-browsed or shown to others.
-
-This is an INSPECTION export. The benchmark itself regenerates adversarial
-images in memory and does NOT read these files — so the folder is safe to
-delete and is not tracked by git.
+and saves them as image files.
 
 Output layout (gitignored ``attack_previews/``):
 
