@@ -8,6 +8,10 @@ data/*
 results/*
 !results/.gitkeep
 
+# Exported attack images (inspection only — large, regenerable, not tracked)
+attack_previews/
+attack_previews.zip
+
 # Python
 __pycache__/
 *.py[cod]
