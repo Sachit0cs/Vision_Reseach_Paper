@@ -4,11 +4,6 @@ data/*
 !data/.gitkeep
 !data/clean/
 
-# Generated outputs
-results/*
-!results/.gitkeep
-!results/gradient/
-
 # Exported attack images (inspection only — large, regenerable, not tracked)
 attack_previews/
 attack_previews.zip
