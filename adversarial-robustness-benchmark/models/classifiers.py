@@ -63,10 +63,13 @@ class TorchVisionClassifier(BaseClassifier):
 
         # Split torchvision's bundled transform: keep resize + crop + to-tensor
         # ([0, 1] space), pull mean/std out into a separate normalization step.
+        # Read antialias from the preset (older versions lack the attribute, so
+        # fall back to True — the modern default).
         tf = weights.transforms()
+        antialias = getattr(tf, "antialias", True)
         self._preprocess = T.Compose(
             [
-                T.Resize(_scalar(tf.resize_size), interpolation=tf.interpolation, antialias=True),
+                T.Resize(_scalar(tf.resize_size), interpolation=tf.interpolation, antialias=antialias),
                 T.CenterCrop(_scalar(tf.crop_size)),
                 T.ToTensor(),  # PIL -> (3, H, W) float in [0, 1]
             ]

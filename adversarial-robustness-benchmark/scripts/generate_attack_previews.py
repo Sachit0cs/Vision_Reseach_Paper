@@ -143,12 +143,33 @@ def export_attack(
     out_dir = os.path.join(out_root, "gradient", model_key, attack_name)
     manifest_path = os.path.join(out_dir, "manifest.json")
 
-    # Resume: skip a (model, attack) that already finished.
+    # Resume: skip a (model, attack) that already finished, but only if the
+    # PREVIOUS run used the same epsilon and seed. Otherwise the on-disk images
+    # were generated under a different config and silently reusing them would
+    # mislead the user. In that case we error out and ask them to delete the
+    # folder explicitly — overwriting risks orphan stale PNGs from the old run.
     if os.path.exists(manifest_path):
+        with open(manifest_path, "r", encoding="utf-8") as f:
+            prev = json.load(f)
+        prev_eps = prev.get("epsilon")
+        prev_seed = prev.get("seed")
+        eps_match = prev_eps is not None and abs(float(prev_eps) - float(epsilon)) < 1e-9
+        seed_match = prev_seed == seed
+        if not (eps_match and seed_match):
+            raise RuntimeError(
+                f"{out_dir}: existing manifest was generated with "
+                f"epsilon={prev_eps}, seed={prev_seed}; this run requests "
+                f"epsilon={epsilon}, seed={seed}. Delete the folder to regenerate."
+            )
         done = len([f for f in os.listdir(out_dir) if f.endswith("." + img_format)])
         if done >= n:
             print(f"  skip  {model_key}/{attack_name}  (already {done} images)")
             return
+        # Same config but fewer images than requested — wipe and regenerate so
+        # the new manifest never lists fewer files than exist on disk.
+        for f in os.listdir(out_dir):
+            if f.endswith("." + img_format) or f == "manifest.json":
+                os.remove(os.path.join(out_dir, f))
     os.makedirs(out_dir, exist_ok=True)
 
     records = []

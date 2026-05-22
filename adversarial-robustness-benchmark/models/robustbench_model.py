@@ -40,6 +40,31 @@ class RobustBenchClassifier(BaseClassifier):
         for p in self.model.parameters():
             p.requires_grad_(False)
 
+        # Contract check: this wrapper deliberately skips the (x - mean) / std
+        # step in `logits` because the RobustBench model is expected to wrap
+        # itself with an `ImageNormalizer` (or equivalent). If it does not, the
+        # network would see raw [0, 1] pixels with no normalization and silently
+        # produce broken predictions / attack gradients.
+        try:
+            from robustbench.model_zoo.architectures.utils_architectures import (
+                ImageNormalizer,
+            )
+            has_normalizer = any(
+                isinstance(m, ImageNormalizer) for m in self.model.modules()
+            )
+        except Exception:
+            # Older robustbench versions or refactors: fall back to a name match.
+            has_normalizer = any(
+                "normaliz" in type(m).__name__.lower() for m in self.model.modules()
+            )
+        if not has_normalizer:
+            raise RuntimeError(
+                f"RobustBench model '{name}' does not appear to bundle an "
+                "input normalizer. This wrapper relies on bundled normalization; "
+                "either pick a model that includes it (e.g. Salman2020Do_R50) or "
+                "extend the wrapper to apply (x - mean) / std explicitly."
+            )
+
         self.categories = list(ResNet50_Weights.DEFAULT.meta["categories"])
         self._preprocess = T.Compose(
             [
