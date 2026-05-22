@@ -1,21 +1,21 @@
 """CLI: export adversarial ("poisoned") images to disk for inspection.
 
 WHAT THIS FILE IS (read first):
-  * It is the GENERAL attack-export tool. It imports the `attacks/` module and
-    writes the poisoned image dataset for the attacks it covers. Today it
-    covers the gradient attacks (FGSM, PGD, AutoAttack, Square); patch,
-    typographic, corruptions and transfer extend the SAME folder structure
-    later without changing the design.
+  * It is a PROOF-OF-CONCEPT visualizer. The real benchmark regenerates
+    adversarial images in memory and never writes them to disk; this script's
+    sole purpose is to dump a SMALL, representative sample of what the poisoned
+    images look like for each (model, attack) pair, so they can be browsed or
+    shown to others.
+  * Default sample size: the first 10 clean images per (model, attack). That's
+    7 models x 4 attacks x 10 = 280 files total — tiny, fast to regenerate.
+    Override with --limit N if you need more (e.g. --limit 1000 to dump every
+    image FGSM/PGD attack).
   * It stores the poisoned images in a gitignored folder (`attack_previews/`)
     with a fixed, per-attack directory structure (see the layout below).
   * It is NOT part of the benchmark. `scripts/run_benchmark.py` /
     `evaluation/pipeline.py` regenerate adversarial images in memory at run
-    time and never read this folder. This exporter exists ONLY so the exact
-    images the benchmark uses can be browsed or shown to others — the folder
-    is fully regenerable and safe to delete.
-
-Generates the per-model gradient-attack images (FGSM, PGD, AutoAttack, Square)
-and saves them as image files.
+    time and never read this folder — it is fully regenerable and safe to
+    delete.
 
 Output layout (gitignored ``attack_previews/``):
 
@@ -24,20 +24,16 @@ Output layout (gitignored ``attack_previews/``):
       gradient/<model>/<attack>/<label>_<id>.png   (+ manifest.json per folder)
       # shared/ (patch, typographic, corruptions) and transfer/ are added later.
 
-Per-model gradient attacks: FGSM/PGD on all 1000 images; AutoAttack and Square
-on the 200-image class-balanced subset specified in config.yaml (they are far
-too slow for the full set). Default total: 7 models x (1000 + 1000 + 200 + 200)
-= 16,800 files.
-
 Usage:
-    python scripts/generate_attack_previews.py                       # everything
-    python scripts/generate_attack_previews.py --attacks fgsm,pgd     # subset
-    python scripts/generate_attack_previews.py --models resnet50 --limit 20
+    python scripts/generate_attack_previews.py                       # 10 imgs / (model, attack)
+    python scripts/generate_attack_previews.py --attacks fgsm,pgd     # subset of attacks
+    python scripts/generate_attack_previews.py --models resnet50 --limit 50
+    python scripts/generate_attack_previews.py --limit 1000           # FGSM/PGD full set
     python scripts/generate_attack_previews.py --zip                  # + attack_previews.zip
 
-Run on a GPU (Kaggle). AutoAttack across all 7 models is the expensive part —
-budget for it. A completed (model, attack) folder is skipped on re-run, so a
-crashed/interrupted run resumes where it stopped.
+A completed (model, attack) folder is skipped on re-run, so a crashed or
+interrupted run resumes where it stopped. If you raise --limit after a previous
+run, delete the relevant folder(s) under attack_previews/ to force regeneration.
 """
 
 from __future__ import annotations
@@ -63,16 +59,26 @@ from attacks.gradient import build_attack  # noqa: E402
 
 _GRADIENT_ATTACKS = ["fgsm", "pgd", "autoattack", "square"]
 # Attacks whose default eval set is a class-balanced subset (config key suffix).
+# Only relevant when --limit is unset AND the user opts into the full subset
+# via --limit >= autoattack_eval_subset / square_eval_subset.
 _SUBSET_ATTACKS = {"autoattack", "square"}
+# Default sample size when --limit is not given. This is a preview/PoC tool,
+# not the benchmark — 10 images per (model, attack) is enough to eyeball the
+# perturbations. Override with --limit N to dump more.
+_DEFAULT_LIMIT = 10
 
 _README = """\
 attack_previews/
 ====================================================================
-Adversarial images exported for inspection.
+Adversarial images exported for inspection (proof of concept).
 
-These are the exact images fed to the models during the benchmark.
-The benchmark regenerates them in memory; this folder is an on-disk
-export for visual inspection only and is NOT tracked by git.
+This folder is a small visual sample of what poisoned images look
+like — it is NOT the dataset used by the benchmark. The benchmark
+regenerates adversarial images in memory and never reads this folder.
+Safe to delete; regenerable from scratch.
+
+Default: the first 10 images per (model, attack). Pass --limit N to
+the generator to dump more. Folder is gitignored.
 
 Layout
 ------
@@ -81,13 +87,6 @@ gradient/<model>/<attack>/<label>_<id>.png
     depends on (clean image, model, attack), so every model has its
     own copy. <attack> is fgsm | pgd | autoattack | square.
     Each folder also holds manifest.json (labels, epsilon, seed).
-
-    Image counts per (model, attack):
-      fgsm, pgd          : all 1000 clean images (cheap to attack).
-      autoattack, square : 200-image class-balanced subset (config:
-                           autoattack_eval_subset / square_eval_subset).
-                           Same 200 indices on every run — seeded by
-                           datasets.loader.load_eval_subset().
 
 (added later)
 shared/<attack>/...   model-agnostic attacks (patch, typographic,
@@ -135,9 +134,10 @@ def export_attack(
 ):
     """Generate and save every adversarial image for one (model, attack).
 
-    ``indices`` is the list of dataset indices to evaluate — it carries the
-    per-attack sampling decision (full 1000 for FGSM/PGD, class-balanced
-    subset for AutoAttack/Square), so this function is sampling-agnostic.
+    ``indices`` is the list of dataset indices to evaluate. The caller decides
+    the per-attack sampling (PoC default: first 10; full set: 1000 for FGSM/PGD
+    and the seeded class-balanced subset for AutoAttack/Square), so this
+    function is sampling-agnostic.
     """
     n = len(indices)
     out_dir = os.path.join(out_root, "gradient", model_key, attack_name)
@@ -196,10 +196,10 @@ def main() -> None:
                         help="Comma-separated model keys (default: all in config.yaml).")
     parser.add_argument("--attacks", type=str, default=None,
                         help=f"Comma-separated attacks (default: {','.join(_GRADIENT_ATTACKS)}).")
-    parser.add_argument("--limit", type=int, default=None,
-                        help="Cap images per (model, attack). Default: 1000 for "
-                             "FGSM/PGD, autoattack_eval_subset / square_eval_subset "
-                             "(200) for the slow attacks.")
+    parser.add_argument("--limit", type=int, default=_DEFAULT_LIMIT,
+                        help=f"Cap images per (model, attack). Default: "
+                             f"{_DEFAULT_LIMIT} (PoC sample). Set to 0 for the "
+                             f"full set (1000 for FGSM/PGD, 200 for AA/Square).")
     parser.add_argument("--epsilon", type=float, default=None,
                         help="L-infinity epsilon in [0,1] (default: config.yaml).")
     parser.add_argument("--batch-size", type=int, default=32)
@@ -221,18 +221,20 @@ def main() -> None:
 
     dataset = load_clean_dataset()
 
-    # Per-attack indices. FGSM/PGD: all 1000 (cheap). AutoAttack/Square: the
-    # class-balanced subset from config (expensive). --limit caps either case.
+    # Per-attack indices. Default is _DEFAULT_LIMIT (10) for every attack —
+    # this is a preview/PoC tool. --limit 0 unlocks the full set: 1000 for
+    # FGSM/PGD, the seeded class-balanced subset for AutoAttack/Square.
+    full_set = (args.limit is not None and args.limit <= 0)
+    cap = None if full_set else args.limit
+
     def indices_for(attack_name: str) -> list[int]:
         if attack_name in _SUBSET_ATTACKS:
-            subset_n = cfg["attack"].get(f"{attack_name}_eval_subset")
-            if subset_n is None:
-                subset_n = len(dataset)
-            if args.limit is not None:
-                subset_n = min(args.limit, subset_n)
+            subset_n = cfg["attack"].get(f"{attack_name}_eval_subset") or len(dataset)
+            if cap is not None:
+                subset_n = min(cap, subset_n)
             _, idx = load_eval_subset(subset_n, seed=seed)
             return idx
-        n = min(args.limit, len(dataset)) if args.limit else len(dataset)
+        n = min(cap, len(dataset)) if cap is not None else len(dataset)
         return list(range(n))
 
     attack_indices = {a: indices_for(a) for a in attacks}
