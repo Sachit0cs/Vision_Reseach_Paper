@@ -63,6 +63,33 @@ def load_clean_dataset(clean_dir: str = "data/clean") -> CleanImageDataset:
     return CleanImageDataset(clean_dir)
 
 
+def load_eval_subset(
+    n: int,
+    seed: int = 42,
+    clean_dir: str = "data/clean",
+) -> tuple["CleanImageDataset", list[int]]:
+    """Return (dataset, indices) for a class-balanced subset of size n.
+
+    Always produces the same indices for a given (n, seed) — deterministic.
+    Labels are read from the clean-set manifest; no separate file is needed.
+    The caller iterates ``dataset[i]`` for i in indices to get (image, label)
+    pairs — the label is already bundled with each image, so there is no
+    alignment problem.
+
+    Usage in the pipeline for slow attacks (AutoAttack, Square):
+        dataset, indices = load_eval_subset(cfg["attack"]["autoattack_eval_subset"])
+        images = torch.stack([to_tensor(dataset[i][0]) for i in indices])
+        labels = [dataset[i][1] for i in indices]
+    """
+    from .sampler import class_balanced_indices
+
+    dataset = CleanImageDataset(clean_dir)
+    indices = class_balanced_indices(dataset.labels, per_class=max(1, n // len(dataset.categories)), seed=seed)
+    # Trim to exactly n in case rounding gave slightly more.
+    indices = indices[:n]
+    return dataset, indices
+
+
 def load_cifar100(train: bool = True, download: bool = True, root: str = "data/cifar100"):
     """Load CIFAR-100 for the Phase-4 defense fine-tuning.
 

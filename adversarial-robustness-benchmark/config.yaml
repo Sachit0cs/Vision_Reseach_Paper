@@ -29,6 +29,16 @@ attack:
   pgd_step: 0.00784313725490196   # 2/255
   pgd_iters: 20
   fgsm_epsilon: 0.03137254901960784
+  # AutoAttack and Square are expensive; evaluate on a class-balanced subset.
+  # Subset is picked with class_balanced_indices (seed=global seed), so the
+  # same 200 images are selected every run — results are fully reproducible.
+  # Selection is class-balanced: floor(subset / num_classes) per class, so no
+  # single class dominates accuracy. Labels are taken directly from the clean-set
+  # manifest (same source as the full evaluation) — no separate label file needed.
+  # Disclose in paper: "AutoAttack and Square evaluated on a 200-image
+  # class-balanced subset due to compute cost." Set to null for the full 1000.
+  autoattack_eval_subset: 200
+  square_eval_subset: 200
 
 # The 7 benchmarked architectures (short keys -> wrappers in models/classifiers.py).
 models:
