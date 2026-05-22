@@ -73,12 +73,15 @@ class FGSM(BaseAttack):
 
     def apply(self, classifier, image_batch_0_1, labels):
         _, images, labels = _prepare(classifier, image_batch_0_1, labels)
-        images.requires_grad_(True)
 
-        loss = F.cross_entropy(classifier.logits(images), labels)
-        grad = torch.autograd.grad(loss, images)[0]
+        # enable_grad guard: callers (e.g. evaluation loops) often wrap inference
+        # in torch.no_grad(); without this, autograd.grad would fail.
+        with torch.enable_grad():
+            images = images.detach().requires_grad_(True)
+            loss = F.cross_entropy(classifier.logits(images), labels)
+            grad = torch.autograd.grad(loss, images)[0]
 
-        adv = images + self.epsilon * grad.sign()
+        adv = images.detach() + self.epsilon * grad.sign()
         return torch.clamp(adv, 0.0, 1.0).detach()
 
 
@@ -119,15 +122,18 @@ class PGD(BaseAttack):
         else:
             adv = images.clone()
 
-        for _ in range(self.num_steps):
-            adv.requires_grad_(True)
-            loss = F.cross_entropy(classifier.logits(adv), labels)
-            grad = torch.autograd.grad(loss, adv)[0]
+        # enable_grad guard: callers (e.g. evaluation loops) often wrap inference
+        # in torch.no_grad(); without this, autograd.grad would fail.
+        with torch.enable_grad():
+            for _ in range(self.num_steps):
+                adv = adv.detach().requires_grad_(True)
+                loss = F.cross_entropy(classifier.logits(adv), labels)
+                grad = torch.autograd.grad(loss, adv)[0]
 
-            adv = adv.detach() + self.step_size * grad.sign()
-            # Project back into the L-infinity epsilon-ball, then into [0, 1].
-            delta = torch.clamp(adv - images, -self.epsilon, self.epsilon)
-            adv = torch.clamp(images + delta, 0.0, 1.0)
+                adv = adv.detach() + self.step_size * grad.sign()
+                # Project back into the L-infinity epsilon-ball, then into [0, 1].
+                delta = torch.clamp(adv - images, -self.epsilon, self.epsilon)
+                adv = torch.clamp(images + delta, 0.0, 1.0)
 
         return adv.detach()
 

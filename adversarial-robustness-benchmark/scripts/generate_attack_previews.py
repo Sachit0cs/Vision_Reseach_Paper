@@ -24,7 +24,10 @@ Output layout (gitignored ``attack_previews/``):
       gradient/<model>/<attack>/<label>_<id>.png   (+ manifest.json per folder)
       # shared/ (patch, typographic, corruptions) and transfer/ are added later.
 
-Per-model gradient attacks: 7 models x 4 attacks x 1000 images = 28,000 files.
+Per-model gradient attacks: FGSM/PGD on all 1000 images; AutoAttack and Square
+on the 200-image class-balanced subset specified in config.yaml (they are far
+too slow for the full set). Default total: 7 models x (1000 + 1000 + 200 + 200)
+= 16,800 files.
 
 Usage:
     python scripts/generate_attack_previews.py                       # everything
@@ -54,11 +57,13 @@ _REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _REPO_ROOT not in sys.path:
     sys.path.insert(0, _REPO_ROOT)
 
-from datasets.loader import load_clean_dataset  # noqa: E402
+from datasets.loader import load_clean_dataset, load_eval_subset  # noqa: E402
 from models.classifiers import build_classifier  # noqa: E402
 from attacks.gradient import build_attack  # noqa: E402
 
 _GRADIENT_ATTACKS = ["fgsm", "pgd", "autoattack", "square"]
+# Attacks whose default eval set is a class-balanced subset (config key suffix).
+_SUBSET_ATTACKS = {"autoattack", "square"}
 
 _README = """\
 attack_previews/
@@ -76,6 +81,13 @@ gradient/<model>/<attack>/<label>_<id>.png
     depends on (clean image, model, attack), so every model has its
     own copy. <attack> is fgsm | pgd | autoattack | square.
     Each folder also holds manifest.json (labels, epsilon, seed).
+
+    Image counts per (model, attack):
+      fgsm, pgd          : all 1000 clean images (cheap to attack).
+      autoattack, square : 200-image class-balanced subset (config:
+                           autoattack_eval_subset / square_eval_subset).
+                           Same 200 indices on every run — seeded by
+                           datasets.loader.load_eval_subset().
 
 (added later)
 shared/<attack>/...   model-agnostic attacks (patch, typographic,
@@ -118,11 +130,16 @@ def make_attack(name: str, cfg: dict, epsilon: float):
 
 
 def export_attack(
-    clf, attack, model_key, attack_name, dataset, out_root,
-    *, limit, batch_size, epsilon, seed, img_format,
+    clf, attack, model_key, attack_name, dataset, indices, out_root,
+    *, batch_size, epsilon, seed, img_format,
 ):
-    """Generate and save every adversarial image for one (model, attack)."""
-    n = min(limit, len(dataset)) if limit else len(dataset)
+    """Generate and save every adversarial image for one (model, attack).
+
+    ``indices`` is the list of dataset indices to evaluate — it carries the
+    per-attack sampling decision (full 1000 for FGSM/PGD, class-balanced
+    subset for AutoAttack/Square), so this function is sampling-agnostic.
+    """
+    n = len(indices)
     out_dir = os.path.join(out_root, "gradient", model_key, attack_name)
     manifest_path = os.path.join(out_dir, "manifest.json")
 
@@ -136,9 +153,9 @@ def export_attack(
 
     records = []
     for start in tqdm(range(0, n, batch_size), desc=f"  {model_key}/{attack_name}", leave=False):
-        idxs = range(start, min(start + batch_size, n))
+        batch_indices = indices[start:start + batch_size]
         tensors, labels, recs = [], [], []
-        for i in idxs:
+        for i in batch_indices:
             image, label = dataset[i]
             tensors.append(clf.preprocess(image))
             labels.append(label)
@@ -180,7 +197,9 @@ def main() -> None:
     parser.add_argument("--attacks", type=str, default=None,
                         help=f"Comma-separated attacks (default: {','.join(_GRADIENT_ATTACKS)}).")
     parser.add_argument("--limit", type=int, default=None,
-                        help="Images per (model, attack) (default: all 1000).")
+                        help="Cap images per (model, attack). Default: 1000 for "
+                             "FGSM/PGD, autoattack_eval_subset / square_eval_subset "
+                             "(200) for the slow attacks.")
     parser.add_argument("--epsilon", type=float, default=None,
                         help="L-infinity epsilon in [0,1] (default: config.yaml).")
     parser.add_argument("--batch-size", type=int, default=32)
@@ -201,7 +220,22 @@ def main() -> None:
     out_root = args.output_dir or os.path.join(_REPO_ROOT, "attack_previews")
 
     dataset = load_clean_dataset()
-    n_per = min(args.limit, len(dataset)) if args.limit else len(dataset)
+
+    # Per-attack indices. FGSM/PGD: all 1000 (cheap). AutoAttack/Square: the
+    # class-balanced subset from config (expensive). --limit caps either case.
+    def indices_for(attack_name: str) -> list[int]:
+        if attack_name in _SUBSET_ATTACKS:
+            subset_n = cfg["attack"].get(f"{attack_name}_eval_subset")
+            if subset_n is None:
+                subset_n = len(dataset)
+            if args.limit is not None:
+                subset_n = min(args.limit, subset_n)
+            _, idx = load_eval_subset(subset_n, seed=seed)
+            return idx
+        n = min(args.limit, len(dataset)) if args.limit else len(dataset)
+        return list(range(n))
+
+    attack_indices = {a: indices_for(a) for a in attacks}
 
     os.makedirs(out_root, exist_ok=True)
     with open(os.path.join(out_root, "README.txt"), "w", encoding="utf-8") as f:
@@ -210,7 +244,9 @@ def main() -> None:
     print(f"device : {device}")
     print(f"models : {models}")
     print(f"attacks: {attacks}")
-    print(f"images : {n_per} per (model, attack)  ->  {len(models) * len(attacks) * n_per} total")
+    per_attack_counts = ", ".join(f"{a}={len(attack_indices[a])}" for a in attacks)
+    total = len(models) * sum(len(idx) for idx in attack_indices.values())
+    print(f"images : per (model, attack): {per_attack_counts}  ->  {total} total")
     print(f"epsilon: {epsilon:.6f}   output: {out_root}")
     if device == "cpu":
         print("WARNING: running on CPU - this will be very slow. A GPU is strongly recommended.")
@@ -223,8 +259,9 @@ def main() -> None:
         for attack_name in attacks:
             attack = make_attack(attack_name, cfg, epsilon)
             export_attack(
-                clf, attack, model_key, attack_name, dataset, out_root,
-                limit=args.limit, batch_size=args.batch_size,
+                clf, attack, model_key, attack_name, dataset,
+                attack_indices[attack_name], out_root,
+                batch_size=args.batch_size,
                 epsilon=epsilon, seed=seed, img_format=args.format,
             )
         del clf

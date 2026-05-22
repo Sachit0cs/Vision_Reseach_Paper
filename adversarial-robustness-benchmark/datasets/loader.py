@@ -76,18 +76,47 @@ def load_eval_subset(
     pairs — the label is already bundled with each image, so there is no
     alignment problem.
 
+    Three regimes:
+      * n >= len(dataset): return every index.
+      * n < num_distinct_classes (e.g. n=200 with 1 image / 1000 classes):
+        randomly pick n classes (seeded) and take one image from each.
+        Avoids the "always classes 0..n-1" bias of naive truncation.
+      * otherwise: take floor(n / num_classes) per class, then trim to n.
+
     Usage in the pipeline for slow attacks (AutoAttack, Square):
         dataset, indices = load_eval_subset(cfg["attack"]["autoattack_eval_subset"])
         images = torch.stack([to_tensor(dataset[i][0]) for i in indices])
         labels = [dataset[i][1] for i in indices]
     """
+    import random
+    from collections import defaultdict
+
     from .sampler import class_balanced_indices
 
     dataset = CleanImageDataset(clean_dir)
-    indices = class_balanced_indices(dataset.labels, per_class=max(1, n // len(dataset.categories)), seed=seed)
-    # Trim to exactly n in case rounding gave slightly more.
-    indices = indices[:n]
-    return dataset, indices
+
+    if n >= len(dataset):
+        return dataset, list(range(len(dataset)))
+
+    by_label: dict[int, list[int]] = defaultdict(list)
+    for idx, label in enumerate(dataset.labels):
+        by_label[label].append(idx)
+    num_distinct = len(by_label)
+
+    if n < num_distinct:
+        # Fewer slots than classes — randomly sub-select classes so the subset
+        # samples uniformly from the full label space (not just labels 0..n-1).
+        rng = random.Random(seed)
+        chosen_labels = sorted(rng.sample(sorted(by_label), n))
+        indices: list[int] = []
+        for label in chosen_labels:
+            pool = by_label[label]
+            indices.append(pool[0] if len(pool) == 1 else rng.choice(pool))
+        return dataset, sorted(indices)
+
+    per_class = max(1, n // num_distinct)
+    indices = class_balanced_indices(dataset.labels, per_class=per_class, seed=seed)
+    return dataset, indices[:n]
 
 
 def load_cifar100(train: bool = True, download: bool = True, root: str = "data/cifar100"):
