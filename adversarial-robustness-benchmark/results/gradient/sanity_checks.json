@@ -1,0 +1,97 @@
+{
+  "pgd_reduces_vgg16": {
+    "clean": 0.687,
+    "robust": 0.001,
+    "drop": 0.686,
+    "passed": true
+  },
+  "autoattack_le_pgd": {
+    "resnet50": {
+      "pgd_robust": 0.004,
+      "aa_robust": 0.0,
+      "passed": true
+    },
+    "vgg16": {
+      "pgd_robust": 0.001,
+      "aa_robust": 0.0,
+      "passed": true
+    },
+    "convnext_tiny": {
+      "pgd_robust": 0.0,
+      "aa_robust": 0.0,
+      "passed": true
+    },
+    "vit_b_16": {
+      "pgd_robust": 0.0,
+      "aa_robust": 0.0,
+      "passed": true
+    },
+    "swin_t": {
+      "pgd_robust": 0.0,
+      "aa_robust": 0.0,
+      "passed": true
+    },
+    "efficientnet_b0": {
+      "pgd_robust": 0.0,
+      "aa_robust": 0.0,
+      "passed": true
+    },
+    "clip_vit_b16": {
+      "pgd_robust": 0.0,
+      "aa_robust": 0.0,
+      "passed": true
+    }
+  },
+  "autoattack_le_pgd_all_passed": true,
+  "gradient_masking": {
+    "resnet50": {
+      "masked": false,
+      "pgd_robust": 0.004,
+      "square_robust": 0.01,
+      "gap_pgd_minus_square": -0.006,
+      "threshold": 0.1
+    },
+    "vgg16": {
+      "masked": false,
+      "pgd_robust": 0.001,
+      "square_robust": 0.0,
+      "gap_pgd_minus_square": 0.001,
+      "threshold": 0.1
+    },
+    "convnext_tiny": {
+      "masked": false,
+      "pgd_robust": 0.0,
+      "square_robust": 0.01,
+      "gap_pgd_minus_square": -0.01,
+      "threshold": 0.1
+    },
+    "vit_b_16": {
+      "masked": false,
+      "pgd_robust": 0.0,
+      "square_robust": 0.0,
+      "gap_pgd_minus_square": 0.0,
+      "threshold": 0.1
+    },
+    "swin_t": {
+      "masked": false,
+      "pgd_robust": 0.0,
+      "square_robust": 0.0,
+      "gap_pgd_minus_square": 0.0,
+      "threshold": 0.1
+    },
+    "efficientnet_b0": {
+      "masked": false,
+      "pgd_robust": 0.0,
+      "square_robust": 0.0,
+      "gap_pgd_minus_square": 0.0,
+      "threshold": 0.1
+    },
+    "clip_vit_b16": {
+      "masked": false,
+      "pgd_robust": 0.0,
+      "square_robust": 0.0,
+      "gap_pgd_minus_square": 0.0,
+      "threshold": 0.1
+    }
+  }
+}

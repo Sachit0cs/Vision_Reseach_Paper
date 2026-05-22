@@ -1,0 +1,8 @@
+model,clean_accuracy,fgsm_robust_accuracy,pgd_robust_accuracy,autoattack_robust_accuracy,square_robust_accuracy
+resnet50,0.7810,0.4080,0.0040,0.0000,0.0100
+vgg16,0.6870,0.0110,0.0010,0.0000,0.0000
+convnext_tiny,0.7870,0.2920,0.0000,0.0000,0.0100
+vit_b_16,0.7930,0.2440,0.0000,0.0000,0.0000
+swin_t,0.7750,0.1910,0.0000,0.0000,0.0000
+efficientnet_b0,0.7430,0.1000,0.0000,0.0000,0.0000
+clip_vit_b16,0.6210,0.0580,0.0000,0.0000,0.0000
