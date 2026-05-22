@@ -132,6 +132,8 @@ class ClipZeroShotClassifier(BaseClassifier):
             tokens = processor(text=prompts, return_tensors="pt", padding=True)
             tokens = {k: v.to(device) for k, v in tokens.items()}
             text_features = self.model.get_text_features(**tokens)
+            if not isinstance(text_features, torch.Tensor):
+                text_features = text_features.pooler_output
             text_features = text_features / text_features.norm(dim=-1, keepdim=True)
         self._text_features = text_features  # (num_classes, dim)
         self._logit_scale = self.model.logit_scale.exp()
@@ -143,6 +145,8 @@ class ClipZeroShotClassifier(BaseClassifier):
         x = batch_0_1.to(self.device)
         x = (x - self._mean) / self._std
         image_features = self.model.get_image_features(pixel_values=x)
+        if not isinstance(image_features, torch.Tensor):
+            image_features = image_features.pooler_output
         image_features = image_features / image_features.norm(dim=-1, keepdim=True)
         return self._logit_scale * image_features @ self._text_features.t()
 
