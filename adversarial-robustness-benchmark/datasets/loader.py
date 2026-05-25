@@ -119,6 +119,64 @@ def load_eval_subset(
     return dataset, indices[:n]
 
 
+class TypographicDataset:
+    """The typographic-overlay poisoned set (Phase 1, Axis C — model-agnostic).
+
+    Built once by ``scripts/generate_datasets.py --typographic`` and committed
+    under ``data/poisoned/typographic/``. Iterating yields
+    ``(PIL.Image, true_label, target_label)`` triples — the third element is
+    the wrong class the overlay text names, used for targeted-attack-success
+    rate (TASR).
+    """
+
+    def __init__(self, poisoned_dir: str = "data/poisoned/typographic"):
+        root = poisoned_dir if os.path.isabs(poisoned_dir) else os.path.join(_REPO_ROOT, poisoned_dir)
+        self.root = root
+        manifest_path = os.path.join(root, "manifest.json")
+        if not os.path.exists(manifest_path):
+            raise FileNotFoundError(
+                f"No typographic manifest at {manifest_path}. "
+                "Run: python scripts/generate_datasets.py --typographic"
+            )
+        with open(manifest_path, "r", encoding="utf-8") as f:
+            self.manifest = json.load(f)
+        self.records = self.manifest["images"]
+        self.config = self.manifest.get("config", {})
+        self.seed = int(self.manifest.get("seed", -1))
+
+    def __len__(self) -> int:
+        return len(self.records)
+
+    def __getitem__(self, i: int) -> tuple[Image.Image, int, int]:
+        rec = self.records[i]
+        path = os.path.join(self.root, rec["filename"])
+        image = Image.open(path).convert("RGB")
+        return image, int(rec["label"]), int(rec["target_label"])
+
+    def __iter__(self):
+        for i in range(len(self)):
+            yield self[i]
+
+    @property
+    def labels(self) -> list[int]:
+        return [int(r["label"]) for r in self.records]
+
+    @property
+    def target_labels(self) -> list[int]:
+        return [int(r["target_label"]) for r in self.records]
+
+    @property
+    def overlay_texts(self) -> list[str]:
+        return [r["overlay_text"] for r in self.records]
+
+
+def load_typographic_dataset(
+    poisoned_dir: str = "data/poisoned/typographic",
+) -> TypographicDataset:
+    """Convenience wrapper returning the typographic-poisoned dataset."""
+    return TypographicDataset(poisoned_dir)
+
+
 def load_cifar100(train: bool = True, download: bool = True, root: str = "data/cifar100"):
     """Load CIFAR-100 for the Phase-4 defense fine-tuning.
 
