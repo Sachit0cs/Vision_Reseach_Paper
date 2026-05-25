@@ -1,0 +1,28 @@
+{
+  "model": "swin_t",
+  "attack": "typographic",
+  "seed": 42,
+  "dataset_size": 1000,
+  "clean_correct": 775,
+  "robust_correct": 770,
+  "tasr_correct": 2,
+  "clean_accuracy": 0.775,
+  "robust_accuracy": 0.77,
+  "targeted_attack_success_rate": 0.002,
+  "fooling_rate": 0.03225806451612903,
+  "n_originally_correct": 775,
+  "n_flipped_from_correct": 25,
+  "typographic_config": {
+    "font_size_frac": 0.12,
+    "position": "top",
+    "padding_frac": 0.04,
+    "opacity": 1.0,
+    "jpeg_quality": 90,
+    "text_form": "lowercase_first_synonym"
+  },
+  "wall_clock_s": {
+    "preprocess": 6.477140333000079,
+    "clean_eval": 4.548210700000027,
+    "typographic_eval": 4.344361402000004
+  }
+}

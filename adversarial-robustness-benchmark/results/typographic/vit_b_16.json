@@ -1,0 +1,28 @@
+{
+  "model": "vit_b_16",
+  "attack": "typographic",
+  "seed": 42,
+  "dataset_size": 1000,
+  "clean_correct": 793,
+  "robust_correct": 773,
+  "tasr_correct": 1,
+  "clean_accuracy": 0.793,
+  "robust_accuracy": 0.773,
+  "targeted_attack_success_rate": 0.001,
+  "fooling_rate": 0.03909205548549811,
+  "n_originally_correct": 793,
+  "n_flipped_from_correct": 31,
+  "typographic_config": {
+    "font_size_frac": 0.12,
+    "position": "top",
+    "padding_frac": 0.04,
+    "opacity": 1.0,
+    "jpeg_quality": 90,
+    "text_form": "lowercase_first_synonym"
+  },
+  "wall_clock_s": {
+    "preprocess": 2.8987364770000568,
+    "clean_eval": 9.984496147000073,
+    "typographic_eval": 10.099140515000045
+  }
+}

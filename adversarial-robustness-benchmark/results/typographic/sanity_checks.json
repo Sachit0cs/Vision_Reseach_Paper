@@ -1,0 +1,61 @@
+{
+  "nonzero_drop_per_model": {
+    "resnet50": {
+      "clean": 0.781,
+      "robust": 0.768,
+      "drop": 0.013000000000000012,
+      "passed": true
+    },
+    "vgg16": {
+      "clean": 0.687,
+      "robust": 0.663,
+      "drop": 0.02400000000000002,
+      "passed": true
+    },
+    "convnext_tiny": {
+      "clean": 0.787,
+      "robust": 0.777,
+      "drop": 0.010000000000000009,
+      "passed": true
+    },
+    "vit_b_16": {
+      "clean": 0.793,
+      "robust": 0.773,
+      "drop": 0.020000000000000018,
+      "passed": true
+    },
+    "swin_t": {
+      "clean": 0.775,
+      "robust": 0.77,
+      "drop": 0.0050000000000000044,
+      "passed": true
+    },
+    "efficientnet_b0": {
+      "clean": 0.743,
+      "robust": 0.722,
+      "drop": 0.02100000000000002,
+      "passed": true
+    },
+    "clip_vit_b16": {
+      "clean": 0.621,
+      "robust": 0.368,
+      "drop": 0.253,
+      "passed": true
+    }
+  },
+  "clip_vs_pure": {
+    "pure_mean_drop": 0.015500000000000014,
+    "clip_drop": 0.253,
+    "clip_resists_more": false
+  },
+  "models_reported": [
+    "clip_vit_b16",
+    "convnext_tiny",
+    "efficientnet_b0",
+    "resnet50",
+    "swin_t",
+    "vgg16",
+    "vit_b_16"
+  ],
+  "all_models_present": true
+}

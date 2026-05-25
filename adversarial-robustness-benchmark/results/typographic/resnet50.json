@@ -1,0 +1,28 @@
+{
+  "model": "resnet50",
+  "attack": "typographic",
+  "seed": 42,
+  "dataset_size": 1000,
+  "clean_correct": 781,
+  "robust_correct": 768,
+  "tasr_correct": 1,
+  "clean_accuracy": 0.781,
+  "robust_accuracy": 0.768,
+  "targeted_attack_success_rate": 0.001,
+  "fooling_rate": 0.03585147247119078,
+  "n_originally_correct": 781,
+  "n_flipped_from_correct": 28,
+  "typographic_config": {
+    "font_size_frac": 0.12,
+    "position": "top",
+    "padding_frac": 0.04,
+    "opacity": 1.0,
+    "jpeg_quality": 90,
+    "text_form": "lowercase_first_synonym"
+  },
+  "wall_clock_s": {
+    "preprocess": 6.389275146999921,
+    "clean_eval": 3.950309897000011,
+    "typographic_eval": 2.672778106999999
+  }
+}

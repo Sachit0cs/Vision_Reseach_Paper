@@ -1,0 +1,28 @@
+{
+  "model": "vgg16",
+  "attack": "typographic",
+  "seed": 42,
+  "dataset_size": 1000,
+  "clean_correct": 687,
+  "robust_correct": 663,
+  "tasr_correct": 0,
+  "clean_accuracy": 0.687,
+  "robust_accuracy": 0.663,
+  "targeted_attack_success_rate": 0.0,
+  "fooling_rate": 0.07569141193595343,
+  "n_originally_correct": 687,
+  "n_flipped_from_correct": 52,
+  "typographic_config": {
+    "font_size_frac": 0.12,
+    "position": "top",
+    "padding_frac": 0.04,
+    "opacity": 1.0,
+    "jpeg_quality": 90,
+    "text_form": "lowercase_first_synonym"
+  },
+  "wall_clock_s": {
+    "preprocess": 3.314446822999912,
+    "clean_eval": 4.5434028539999645,
+    "typographic_eval": 4.4545336269999325
+  }
+}
