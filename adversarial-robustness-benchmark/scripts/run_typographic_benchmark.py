@@ -162,10 +162,34 @@ def run_one(model_key: str, cfg: dict, out_dir: str, force: bool) -> str:
     print(f"  fooling rate   : {flipped}/{n_orig_correct} = {fooling_rate:.3f}  "
           f"(of originally-correct images that flipped)")
 
+    # Record the eval host environment in each JSON so the report builder can
+    # reconstruct it later — even when run from a different machine.
+    host_env = {
+        "gpu": torch.cuda.get_device_name(0) if torch.cuda.is_available() else "CPU",
+        "cuda_available": bool(torch.cuda.is_available()),
+        "torch": torch.__version__,
+    }
+    try:
+        import torchvision
+        host_env["torchvision"] = torchvision.__version__
+    except ImportError:
+        pass
+    try:
+        import transformers
+        host_env["transformers"] = transformers.__version__
+    except ImportError:
+        pass
+    try:
+        import PIL
+        host_env["pillow"] = PIL.__version__
+    except ImportError:
+        pass
+
     record = {
         "model": model_key,
         "attack": "typographic",
         "seed": int(cfg["seed"]),
+        "host_env": host_env,
         "dataset_size": len(labels),
         "clean_correct": clean_correct,
         "robust_correct": robust_correct,

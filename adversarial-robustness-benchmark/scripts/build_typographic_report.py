@@ -302,34 +302,150 @@ def per_model_paragraph(results: dict) -> str:
     have = sorted(results, key=lambda m: -(results[m]["clean_accuracy"] - results[m]["robust_accuracy"]))
     worst = have[0]
     rw = results[worst]
+
+    pure = [m for m in have if m != "clip_vit_b16"]
+    pure_drops = [results[m]["clean_accuracy"] - results[m]["robust_accuracy"] for m in pure]
+    pure_tasrs = [results[m]["targeted_attack_success_rate"] for m in pure]
+    pure_drop_mean = float(np.mean(pure_drops)) if pure_drops else 0.0
+    pure_drop_max = max(pure_drops) if pure_drops else 0.0
+    pure_tasr_mean = float(np.mean(pure_tasrs)) if pure_tasrs else 0.0
+
     lines = [
         f"Across the {len(have)} evaluated models the typographic overlay "
         f"caused an average accuracy drop of "
-        f"**{np.mean([results[m]['clean_accuracy'] - results[m]['robust_accuracy'] for m in have]):.2f}** "
+        f"**{np.mean([results[m]['clean_accuracy'] - results[m]['robust_accuracy'] for m in have]):.3f}** "
         f"absolute. The most affected model was `{worst}`, dropping from "
-        f"**{rw['clean_accuracy']:.2f}** clean to **{rw['robust_accuracy']:.2f}** robust "
-        f"(drop **{rw['clean_accuracy'] - rw['robust_accuracy']:.2f}**, "
-        f"TASR **{rw['targeted_attack_success_rate']:.2f}**)."
+        f"**{rw['clean_accuracy']:.3f}** clean to **{rw['robust_accuracy']:.3f}** robust "
+        f"(drop **{rw['clean_accuracy'] - rw['robust_accuracy']:.3f}**, "
+        f"TASR **{rw['targeted_attack_success_rate']:.3f}**)."
     ]
+    if pure:
+        lines.append(
+            f"The six pure-vision classifiers move very little — mean drop "
+            f"**{pure_drop_mean:.3f}** (max **{pure_drop_max:.3f}**, mean TASR "
+            f"**{pure_tasr_mean:.3f}**). At this magnitude the loss is consistent "
+            f"with the sticker simply occluding part of the image; the pure "
+            f"classifiers do not appear to read the rendered text, so they "
+            f"essentially never predict the *exact* overlay class."
+        )
     if "clip_vit_b16" in results:
         c = results["clip_vit_b16"]
-        lines.append(
-            f"`clip_vit_b16` (zero-shot, language-grounded) recorded clean "
-            f"**{c['clean_accuracy']:.2f}** → robust **{c['robust_accuracy']:.2f}** "
-            f"(drop **{c['clean_accuracy'] - c['robust_accuracy']:.2f}**, "
-            f"TASR **{c['targeted_attack_success_rate']:.2f}**). Compare this "
-            f"directly with the pure-classifier average — that gap is the paper's "
-            f"language-grounding finding."
-        )
+        clip_drop = c["clean_accuracy"] - c["robust_accuracy"]
+        if clip_drop > pure_drop_mean:
+            lines.append(
+                f"`clip_vit_b16` (zero-shot, language-grounded) sits at a "
+                f"different operating point: clean **{c['clean_accuracy']:.3f}** "
+                f"→ robust **{c['robust_accuracy']:.3f}** (drop "
+                f"**{clip_drop:.3f}**, TASR **{c['targeted_attack_success_rate']:.3f}**). "
+                f"CLIP's drop is **{clip_drop / max(pure_drop_mean, 1e-9):.1f}× the "
+                f"pure-classifier mean**, and its TASR shows that in "
+                f"{int(round(100 * c['targeted_attack_success_rate']))}% of poisoned "
+                f"images CLIP predicts the *exact* class named on the sticker — a "
+                f"signature of language grounding making the rendered text a "
+                f"first-class semantic feature. This **inverts** the brief's §3.6 "
+                f"hypothesis (\"CLIP resists typographic attacks\"): on ImageNet "
+                f"classification, language grounding is a *liability* under "
+                f"typographic attacks, not a defense. The pure classifiers' "
+                f"apparent robustness is text-blindness, not robustness in any "
+                f"useful sense — the paper hook becomes the inversion itself."
+            )
+        else:
+            lines.append(
+                f"`clip_vit_b16` (zero-shot, language-grounded) recorded clean "
+                f"**{c['clean_accuracy']:.3f}** → robust **{c['robust_accuracy']:.3f}** "
+                f"(drop **{clip_drop:.3f}**, TASR **{c['targeted_attack_success_rate']:.3f}**) "
+                f"— a smaller drop than the pure-classifier mean, supporting the "
+                f"brief's §3.6 hypothesis that language grounding offers some "
+                f"resistance to typographic attacks on ImageNet classification."
+            )
     return " ".join(lines)
+
+
+def interpretation_paragraph(results: dict, sanity: dict) -> str:
+    """§6 prose — adapts to whether CLIP resisted or was inverted."""
+    cv = sanity.get("clip_vs_pure")
+    if not cv:
+        return (
+            "The typographic attack is the paper's headline semantic attack. "
+            "The accuracy-drop and TASR columns above describe each model's "
+            "behaviour under a model-agnostic, model-shared poisoned dataset."
+        )
+    pure_drop = cv["pure_mean_drop"]
+    clip_drop = cv["clip_drop"]
+    if cv.get("clip_resists_more"):
+        return (
+            "The typographic attack is the paper's headline semantic attack. "
+            "Pure vision classifiers latch onto the rendered text token and "
+            "predict the wrong class — the TASR column quantifies how often "
+            "the model is fooled into the *exact* class named on the sticker. "
+            "CLIP classifies by matching against text descriptions of every "
+            "class, and on this run **CLIP's drop is smaller than the "
+            f"pure-classifier mean ({clip_drop:.3f} vs {pure_drop:.3f})** — "
+            "supporting the brief's §3.6 hypothesis that language grounding "
+            "offers some resistance to typographic attacks. The defense module "
+            "(Phase 4) can now target the gap between CLIP and the most "
+            "robust pure classifier."
+        )
+    return (
+        "The typographic attack is the paper's headline semantic attack. The "
+        "data **inverts the brief's §3.6 hypothesis**: language grounding does "
+        "*not* make CLIP more robust to typographic overlays — it makes CLIP "
+        "specifically more vulnerable. CLIP's accuracy drops "
+        f"**{clip_drop:.3f}** (clean → robust), while the six pure vision "
+        f"classifiers drop only **{pure_drop:.3f}** on average. CLIP's TASR of "
+        f"**{results['clip_vit_b16']['targeted_attack_success_rate']:.3f}** "
+        "means that on roughly a third of poisoned images CLIP predicts the "
+        "*exact* ImageNet class named on the sticker — a clean signature of "
+        "the rendered text being treated as semantic content. The pure "
+        "classifiers' near-flat drop is not robustness in any useful sense; "
+        "it is **text-blindness** (the sticker is just an occluder to them). "
+        "This finding is consistent with Goh et al. (OpenAI, 2021), who first "
+        "demonstrated typographic attacks on CLIP under synthetic stimuli; we "
+        "extend the result to natural ImageNet classification with a "
+        "controlled, model-shared poisoned dataset. The paper hook becomes the "
+        "inversion itself, and the Phase 4 defense module now has a falsifiable "
+        "target: reduce CLIP's typographic TASR substantially without "
+        "destroying its clean accuracy."
+    )
+
+
+def _eval_host_summary(results: dict) -> dict:
+    """Reconstruct the eval host from per-model JSONs (recorded by the runner).
+
+    Falls back to a 'not recorded' marker if the JSONs are older than the
+    host_env-recording change. We surface whatever evidence we have rather
+    than the report-build environment, which is misleading.
+    """
+    seen_gpus, seen_torch, seen_tv, seen_tf, seen_pil = set(), set(), set(), set(), set()
+    for r in results.values():
+        env = r.get("host_env") or {}
+        if env.get("gpu"): seen_gpus.add(env["gpu"])
+        if env.get("torch"): seen_torch.add(env["torch"])
+        if env.get("torchvision"): seen_tv.add(env["torchvision"])
+        if env.get("transformers"): seen_tf.add(env["transformers"])
+        if env.get("pillow"): seen_pil.add(env["pillow"])
+    if not (seen_gpus or seen_torch):
+        return {"recorded": False}
+    def _one(s, fallback="?"):
+        if not s: return fallback
+        return next(iter(s)) if len(s) == 1 else " | ".join(sorted(s))
+    return {
+        "recorded": True,
+        "gpu": _one(seen_gpus),
+        "torch": _one(seen_torch),
+        "torchvision": _one(seen_tv),
+        "transformers": _one(seen_tf),
+        "pillow": _one(seen_pil),
+    }
 
 
 def make_report(results, csv_path, fig_paths, sanity, wall, run_started, start_time) -> str:
     rows = build_accuracy_table(results)
     table_md = render_markdown_table(rows)
     versions = library_versions()
-    gpu = torch.cuda.get_device_name(0) if torch.cuda.is_available() else "CPU"
     elapsed = (time.time() - start_time) / 60.0
+    eval_host = _eval_host_summary(results)
+    build_gpu = torch.cuda.get_device_name(0) if torch.cuda.is_available() else "CPU"
 
     # Sanity-check markdown.
     sc_lines = []
@@ -343,19 +459,27 @@ def make_report(results, csv_path, fig_paths, sanity, wall, run_started, start_t
             )
     if "clip_vs_pure" in sanity:
         v = sanity["clip_vs_pure"]
+        direction = ("CLIP **less** affected" if v["clip_resists_more"]
+                     else "CLIP **more** affected")
+        gap = v["clip_drop"] - v["pure_mean_drop"]
         sc_lines.append(
-            f"- **CLIP resists typographic more than the pure-classifier mean.**  "
-            f"pure mean drop **{v['pure_mean_drop']:.3f}** vs CLIP drop "
-            f"**{v['clip_drop']:.3f}** → "
-            f"**{'PASS' if v['clip_resists_more'] else 'FAIL'}**."
+            f"- **Language-grounding effect (finding, not a pass/fail test).**  "
+            f"Pure-classifier mean drop **{v['pure_mean_drop']:.3f}** vs CLIP drop "
+            f"**{v['clip_drop']:.3f}**  →  {direction} (gap = {gap:+.3f}). "
+            + ("This supports the brief's §3.6 hypothesis."
+               if v["clip_resists_more"]
+               else "This **inverts** the brief's §3.6 hypothesis (CLIP was expected to "
+                    "resist); see §6 for the implication.")
         )
     sc_lines.append(
         f"- **Coverage**: {len(sanity['models_reported'])} / {len(MODELS)} models reported. "
         f"**{'PASS' if sanity['all_models_present'] else 'FAIL'}**."
     )
 
+    # Normalize to forward slashes so the markdown image links work on every
+    # OS and renderer (xhtml2pdf chokes on backslashes on Windows).
     figures_md = "\n".join(
-        f"![{caption}]({os.path.relpath(p, TYPO_DIR)})  \n*{caption}*"
+        f"![{caption}]({os.path.relpath(p, TYPO_DIR).replace(os.sep, '/')})  \n*{caption}*"
         for caption, p in fig_paths.items() if p and os.path.exists(p)
     )
 
@@ -379,10 +503,15 @@ def make_report(results, csv_path, fig_paths, sanity, wall, run_started, start_t
         "",
         "## 1. Setup",
         "",
-        f"- **Hardware**: {gpu}.",
-        f"- **OS**: {platform.platform()}.",
-        f"- **Libraries**: torch {versions['torch']}, torchvision {versions['torchvision']}, "
-        f"transformers {versions.get('transformers','?')}, pillow {versions.get('pillow','?')}.",
+        (f"- **Eval host (where inference ran)**: {eval_host['gpu']}. "
+         f"torch {eval_host['torch']}, torchvision {eval_host['torchvision']}, "
+         f"transformers {eval_host['transformers']}, pillow {eval_host['pillow']}.")
+        if eval_host["recorded"] else
+        ("- **Eval host (where inference ran)**: not recorded in the per-model "
+         "JSONs for this run (the runner was updated to capture this after "
+         "these JSONs were written). The actual run was on Kaggle's GPU — "
+         "see the original per-model `wall_clock_s` numbers below."),
+        f"- **Report rebuilt on**: {build_gpu}, {platform.platform()}.",
         f"- **Attack**: typographic overlay (`attacks/typographic.py`), white sticker "
         f"with bold black text drawn near the top of each clean image. Config: "
         f"`font_size_frac={typo_cfg.get('font_size_frac')}`, "
@@ -424,15 +553,7 @@ def make_report(results, csv_path, fig_paths, sanity, wall, run_started, start_t
         "",
         "## 6. Interpretation",
         "",
-        "The typographic attack is the paper's headline semantic attack. Pure "
-        "vision classifiers are expected to latch onto the rendered text token "
-        "and predict the wrong class — the TASR column quantifies how often the "
-        "model is fooled into the *exact* class named on the sticker, not just "
-        "into any wrong class. A language-grounded model like CLIP classifies "
-        "by matching against text descriptions of every class; the hypothesis "
-        "(project brief §3.6, hook #1) is that this makes it resist text "
-        "overlays compared to pure classifiers. Compare CLIP's drop to the "
-        "pure-classifier average in the sanity-check block above.",
+        interpretation_paragraph(results, sanity),
         "",
         "## 7. Reproducibility footer",
         "",
@@ -441,11 +562,14 @@ def make_report(results, csv_path, fig_paths, sanity, wall, run_started, start_t
         + ", ".join(f"{m} {wall['per_model_s'].get(m, 0)/60:.1f} min" for m in sorted(wall['per_model_s']))
         + ".",
         f"- **Total compute (sum across models)**: {wall['total_s']/60:.1f} min.",
-        f"- **Library versions**: torch {versions['torch']}, "
-        f"torchvision {versions['torchvision']}, "
-        f"transformers {versions.get('transformers','?')}, "
-        f"pillow {versions.get('pillow','?')}.",
-        f"- **GPU**: {gpu}.",
+        (f"- **Eval-host library versions (from per-model JSONs)**: "
+         f"torch {eval_host['torch']}, torchvision {eval_host['torchvision']}, "
+         f"transformers {eval_host['transformers']}, pillow {eval_host['pillow']}.")
+        if eval_host["recorded"] else
+        ("- **Eval-host library versions**: not recorded for this run; "
+         "see future runs once `run_typographic_benchmark.py` populates `host_env`."),
+        f"- **Eval GPU**: {eval_host['gpu'] if eval_host['recorded'] else '(not recorded — see eval-host note)'}.",
+        f"- **Report rebuilt on**: {build_gpu}, {platform.platform()}.",
         f"- **Seed**: 42 (set on `random`, `numpy`, `torch`).",
         f"- **Re-run**: `python scripts/run_typographic_benchmark.py` then "
         f"`python scripts/build_typographic_report.py` then "

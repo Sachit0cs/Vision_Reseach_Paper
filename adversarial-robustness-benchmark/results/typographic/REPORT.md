@@ -1,14 +1,13 @@
 # Typographic-Attack Benchmark — Report
 
-_Run started: 2026-05-25 12:43 UTC.  Author: Sachit Jain._
+_Run started: 2026-05-25 12:58 UTC.  Author: Sachit Jain._
 
 This report covers Phase 1, Axis C of the project — a single semantic, model-agnostic attack (the typographic overlay) evaluated against the 7 ImageNet baselines listed in `config.yaml`. The poisoned dataset is generated once by `scripts/generate_datasets.py --typographic` and shared across all models; this report aggregates the per-model JSONs in this directory.
 
 ## 1. Setup
 
-- **Hardware**: Tesla T4.
-- **OS**: Linux-6.6.122+-x86_64-with-glibc2.35.
-- **Libraries**: torch 2.10.0+cu128, torchvision 0.25.0+cu128, transformers 5.0.0, pillow 11.3.0.
+- **Eval host (where inference ran)**: not recorded in the per-model JSONs for this run (the runner was updated to capture this after these JSONs were written). The actual run was on Kaggle's GPU — see the original per-model `wall_clock_s` numbers below.
+- **Report rebuilt on**: CPU, Windows-11-10.0.26200-SP0.
 - **Attack**: typographic overlay (`attacks/typographic.py`), white sticker with bold black text drawn near the top of each clean image. Config: `font_size_frac=0.12`, `position='top'`, `padding_frac=0.04`, `opacity=1.0`, `jpeg_quality=90`, `text_form='lowercase_first_synonym'`.
 - **Dataset**: the full 1000-image clean benchmark, one poisoned variant per clean image (`data/poisoned/typographic/`). Each poisoned image is stamped with the lowercase first synonym of a random *wrong* ImageNet class, picked deterministically with the global seed.
 - **Global seed**: 42 (`config.yaml`). Set on `random`, `numpy`, `torch` at the start of every model.
@@ -39,12 +38,12 @@ Machine-readable copy: `accuracy_table.csv`.
   - `swin_t`: clean **0.775** → robust **0.770** (drop **0.005**) → **PASS**.
   - `efficientnet_b0`: clean **0.743** → robust **0.722** (drop **0.021**) → **PASS**.
   - `clip_vit_b16`: clean **0.621** → robust **0.368** (drop **0.253**) → **PASS**.
-- **CLIP resists typographic more than the pure-classifier mean.**  pure mean drop **0.016** vs CLIP drop **0.253** → **FAIL**.
+- **Language-grounding effect (finding, not a pass/fail test).**  Pure-classifier mean drop **0.016** vs CLIP drop **0.253**  →  CLIP **more** affected (gap = +0.237). This **inverts** the brief's §3.6 hypothesis (CLIP was expected to resist); see §6 for the implication.
 - **Coverage**: 7 / 7 models reported. **PASS**.
 
 ## 4. Per-model analysis
 
-Across the 7 evaluated models the typographic overlay caused an average accuracy drop of **0.05** absolute. The most affected model was `clip_vit_b16`, dropping from **0.62** clean to **0.37** robust (drop **0.25**, TASR **0.34**). `clip_vit_b16` (zero-shot, language-grounded) recorded clean **0.62** → robust **0.37** (drop **0.25**, TASR **0.34**). Compare this directly with the pure-classifier average — that gap is the paper's language-grounding finding.
+Across the 7 evaluated models the typographic overlay caused an average accuracy drop of **0.049** absolute. The most affected model was `clip_vit_b16`, dropping from **0.621** clean to **0.368** robust (drop **0.253**, TASR **0.342**). The six pure-vision classifiers move very little — mean drop **0.016** (max **0.024**, mean TASR **0.001**). At this magnitude the loss is consistent with the sticker simply occluding part of the image; the pure classifiers do not appear to read the rendered text, so they essentially never predict the *exact* overlay class. `clip_vit_b16` (zero-shot, language-grounded) sits at a different operating point: clean **0.621** → robust **0.368** (drop **0.253**, TASR **0.342**). CLIP's drop is **16.3× the pure-classifier mean**, and its TASR shows that in 34% of poisoned images CLIP predicts the *exact* class named on the sticker — a signature of language grounding making the rendered text a first-class semantic feature. This **inverts** the brief's §3.6 hypothesis ("CLIP resists typographic attacks"): on ImageNet classification, language grounding is a *liability* under typographic attacks, not a defense. The pure classifiers' apparent robustness is text-blindness, not robustness in any useful sense — the paper hook becomes the inversion itself.
 
 ## 5. Figures
 
@@ -59,14 +58,15 @@ Across the 7 evaluated models the typographic overlay caused an average accuracy
 
 ## 6. Interpretation
 
-The typographic attack is the paper's headline semantic attack. Pure vision classifiers are expected to latch onto the rendered text token and predict the wrong class — the TASR column quantifies how often the model is fooled into the *exact* class named on the sticker, not just into any wrong class. A language-grounded model like CLIP classifies by matching against text descriptions of every class; the hypothesis (project brief §3.6, hook #1) is that this makes it resist text overlays compared to pure classifiers. Compare CLIP's drop to the pure-classifier average in the sanity-check block above.
+The typographic attack is the paper's headline semantic attack. The data **inverts the brief's §3.6 hypothesis**: language grounding does *not* make CLIP more robust to typographic overlays — it makes CLIP specifically more vulnerable. CLIP's accuracy drops **0.253** (clean → robust), while the six pure vision classifiers drop only **0.016** on average. CLIP's TASR of **0.342** means that on roughly a third of poisoned images CLIP predicts the *exact* ImageNet class named on the sticker — a clean signature of the rendered text being treated as semantic content. The pure classifiers' near-flat drop is not robustness in any useful sense; it is **text-blindness** (the sticker is just an occluder to them). This finding is consistent with Goh et al. (OpenAI, 2021), who first demonstrated typographic attacks on CLIP under synthetic stimuli; we extend the result to natural ImageNet classification with a controlled, model-shared poisoned dataset. The paper hook becomes the inversion itself, and the Phase 4 defense module now has a falsifiable target: reduce CLIP's typographic TASR substantially without destroying its clean accuracy.
 
 ## 7. Reproducibility footer
 
-- **Wall-clock (this report build session)**: 0.1 min.
+- **Wall-clock (this report build session)**: 0.0 min.
 - **Per-model cumulative compute (sum of per-cell `wall_clock_s`)**: clip_vit_b16 0.5 min, convnext_tiny 0.3 min, efficientnet_b0 0.1 min, resnet50 0.2 min, swin_t 0.3 min, vgg16 0.2 min, vit_b_16 0.4 min.
 - **Total compute (sum across models)**: 1.9 min.
-- **Library versions**: torch 2.10.0+cu128, torchvision 0.25.0+cu128, transformers 5.0.0, pillow 11.3.0.
-- **GPU**: Tesla T4.
+- **Eval-host library versions**: not recorded for this run; see future runs once `run_typographic_benchmark.py` populates `host_env`.
+- **Eval GPU**: (not recorded — see eval-host note).
+- **Report rebuilt on**: CPU, Windows-11-10.0.26200-SP0.
 - **Seed**: 42 (set on `random`, `numpy`, `torch`).
 - **Re-run**: `python scripts/run_typographic_benchmark.py` then `python scripts/build_typographic_report.py` then `python scripts/build_gradient_report_pdf.py --input results/typographic/REPORT.md --output results/typographic/REPORT.pdf`. Per-model JSONs are the resumption unit — delete one to force its recomputation.
