@@ -1,8 +1,13 @@
-# Datasets — track only the committed clean benchmark set.
-# The parquet cache, CIFAR-100 and future poisoned sets stay ignored.
+# Datasets — track the committed clean benchmark set and the typographic
+# poisoned set (one shared, model-agnostic poisoned set generated once and
+# checked in). The parquet cache, CIFAR-100 and other future poisoned sets
+# (patch, corruptions) stay ignored.
 data/*
 !data/.gitkeep
 !data/clean/
+!data/poisoned/
+data/poisoned/*
+!data/poisoned/typographic/
 
 # Exported attack images (inspection only — large, regenerable, not tracked)
 attack_previews/
