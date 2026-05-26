@@ -36,6 +36,8 @@ Thumbs.db
 
 !data/poisoned/typographic/
 !data/poisoned/corruptions/
-!data/poisoned/transfer/
+# transfer dataset is regenerable from generate_datasets.py --transfer
+# (deterministic on seed+surrogate); kept out of git to avoid LFS bandwidth
+data/poisoned/transfer/
 
 .claude/
