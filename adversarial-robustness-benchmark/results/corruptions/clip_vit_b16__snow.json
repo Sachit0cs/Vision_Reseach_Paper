@@ -1,0 +1,36 @@
+{
+  "model": "clip_vit_b16",
+  "attack": "corruptions",
+  "corruption_type": "snow",
+  "severity": 3,
+  "seed": 42,
+  "host_env": {
+    "gpu": "Tesla T4",
+    "cuda_available": true,
+    "torch": "2.10.0+cu128",
+    "torchvision": "0.25.0+cu128",
+    "transformers": "5.0.0",
+    "pillow": "11.3.0"
+  },
+  "dataset_size": 1000,
+  "clean_correct": 621,
+  "robust_correct": 533,
+  "clean_accuracy": 0.621,
+  "robust_accuracy": 0.533,
+  "accuracy_drop": 0.08799999999999997,
+  "fooling_rate": 0.20933977455716588,
+  "n_originally_correct": 621,
+  "n_flipped_from_correct": 130,
+  "corruption_config": {
+    "crop_size": 224,
+    "jpeg_quality": 90,
+    "implementation": "self_contained_numpy_scipy_pil",
+    "implementation_note": "motion_blur/snow/frost/fog use NumPy approximations of the canonical Wand/ImageMagick versions; numbers may not be bit-equivalent to Hendrycks's published ImageNet-C but are calibrated to the same severity ramp."
+  },
+  "wall_clock_s": {
+    "preprocess_clean": 3.678577903000132,
+    "preprocess_corrupt": 1.3114642999998978,
+    "clean_eval": 11.450819354000032,
+    "corrupt_eval": 11.558841131999998
+  }
+}

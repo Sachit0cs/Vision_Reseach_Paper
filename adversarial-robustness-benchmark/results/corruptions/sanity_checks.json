@@ -1,0 +1,107 @@
+{
+  "per_corruption_drop_threshold": {
+    "gaussian_noise": {
+      "n_models_reported": 7,
+      "n_with_drop_gt_1pct": 7,
+      "mean_drop": 0.2742857142857143,
+      "passed": true
+    },
+    "shot_noise": {
+      "n_models_reported": 7,
+      "n_with_drop_gt_1pct": 7,
+      "mean_drop": 0.28485714285714286,
+      "passed": true
+    },
+    "impulse_noise": {
+      "n_models_reported": 7,
+      "n_with_drop_gt_1pct": 7,
+      "mean_drop": 0.3288571428571429,
+      "passed": true
+    },
+    "defocus_blur": {
+      "n_models_reported": 7,
+      "n_with_drop_gt_1pct": 7,
+      "mean_drop": 0.3285714285714286,
+      "passed": true
+    },
+    "glass_blur": {
+      "n_models_reported": 7,
+      "n_with_drop_gt_1pct": 7,
+      "mean_drop": 0.6115714285714285,
+      "passed": true
+    },
+    "motion_blur": {
+      "n_models_reported": 7,
+      "n_with_drop_gt_1pct": 7,
+      "mean_drop": 0.6007142857142858,
+      "passed": true
+    },
+    "zoom_blur": {
+      "n_models_reported": 7,
+      "n_with_drop_gt_1pct": 7,
+      "mean_drop": 0.37300000000000005,
+      "passed": true
+    },
+    "snow": {
+      "n_models_reported": 7,
+      "n_with_drop_gt_1pct": 7,
+      "mean_drop": 0.0975714285714286,
+      "passed": true
+    },
+    "frost": {
+      "n_models_reported": 7,
+      "n_with_drop_gt_1pct": 7,
+      "mean_drop": 0.155,
+      "passed": true
+    },
+    "fog": {
+      "n_models_reported": 7,
+      "n_with_drop_gt_1pct": 7,
+      "mean_drop": 0.36828571428571427,
+      "passed": true
+    },
+    "brightness": {
+      "n_models_reported": 7,
+      "n_with_drop_gt_1pct": 7,
+      "mean_drop": 0.056857142857142905,
+      "passed": true
+    },
+    "contrast": {
+      "n_models_reported": 7,
+      "n_with_drop_gt_1pct": 7,
+      "mean_drop": 0.13542857142857148,
+      "passed": true
+    },
+    "elastic_transform": {
+      "n_models_reported": 7,
+      "n_with_drop_gt_1pct": 6,
+      "mean_drop": 0.019000000000000017,
+      "passed": true
+    },
+    "pixelate": {
+      "n_models_reported": 7,
+      "n_with_drop_gt_1pct": 7,
+      "mean_drop": 0.19000000000000009,
+      "passed": true
+    },
+    "jpeg_compression": {
+      "n_models_reported": 7,
+      "n_with_drop_gt_1pct": 7,
+      "mean_drop": 0.12142857142857146,
+      "passed": true
+    }
+  },
+  "overall_mean_drop": {
+    "value": 0.26302857142857144,
+    "expected_window": [
+      0.05,
+      0.25
+    ],
+    "passed": false
+  },
+  "coverage": {
+    "expected_pairs": 105,
+    "reported_pairs": 105,
+    "passed": true
+  }
+}

@@ -1,0 +1,36 @@
+{
+  "model": "resnet50",
+  "attack": "corruptions",
+  "corruption_type": "shot_noise",
+  "severity": 3,
+  "seed": 42,
+  "host_env": {
+    "gpu": "Tesla T4",
+    "cuda_available": true,
+    "torch": "2.10.0+cu128",
+    "torchvision": "0.25.0+cu128",
+    "transformers": "5.0.0",
+    "pillow": "11.3.0"
+  },
+  "dataset_size": 1000,
+  "clean_correct": 781,
+  "robust_correct": 457,
+  "clean_accuracy": 0.781,
+  "robust_accuracy": 0.457,
+  "accuracy_drop": 0.324,
+  "fooling_rate": 0.43661971830985913,
+  "n_originally_correct": 781,
+  "n_flipped_from_correct": 341,
+  "corruption_config": {
+    "crop_size": 224,
+    "jpeg_quality": 90,
+    "implementation": "self_contained_numpy_scipy_pil",
+    "implementation_note": "motion_blur/snow/frost/fog use NumPy approximations of the canonical Wand/ImageMagick versions; numbers may not be bit-equivalent to Hendrycks's published ImageNet-C but are calibrated to the same severity ramp."
+  },
+  "wall_clock_s": {
+    "preprocess_clean": 3.2883267150000393,
+    "preprocess_corrupt": 2.5074071119997825,
+    "clean_eval": 2.769865066999955,
+    "corrupt_eval": 2.7256496079999124
+  }
+}
