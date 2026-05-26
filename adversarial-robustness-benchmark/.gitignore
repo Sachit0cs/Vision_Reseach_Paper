@@ -34,4 +34,8 @@ Thumbs.db
 .vscode/
 .idea/
 
+!data/poisoned/typographic/
+!data/poisoned/corruptions/
+!data/poisoned/transfer/
+
 .claude/

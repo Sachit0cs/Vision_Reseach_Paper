@@ -1,0 +1,41 @@
+{
+  "attack": "transfer_pgd",
+  "surrogate": "resnet50",
+  "threat_model": "Linf",
+  "epsilon": 0.03137254901960784,
+  "epsilon_255": 8.0,
+  "pgd_step": 0.00784313725490196,
+  "pgd_step_255": 2.0,
+  "num_steps": 20,
+  "random_start": true,
+  "seed": 42,
+  "batch_size": 32,
+  "num_images": 1000,
+  "shape": [
+    1000,
+    3,
+    224,
+    224
+  ],
+  "dtype": "torch.float32",
+  "pixel_range": [
+    0.0,
+    1.0
+  ],
+  "max_linf_deviation": 0.03137257695198059,
+  "source_manifest": "data/clean/manifest.json",
+  "files": {
+    "clean": "clean_batch.pt",
+    "adv": "adv_batch.pt",
+    "labels": "labels.pt"
+  },
+  "generated_utc": "2026-05-26 17:36:04Z",
+  "env": {
+    "torch": "2.10.0+cu128",
+    "cuda": "12.8",
+    "device": "cuda",
+    "gpu": "Tesla T4",
+    "python": "3.12.12",
+    "platform": "Linux-6.6.122+-x86_64-with-glibc2.35"
+  }
+}

@@ -45,6 +45,7 @@ if _REPO_ROOT not in sys.path:
 from datasets.sampler import ReservoirPerClass  # noqa: E402
 from attacks.typographic import render_typographic  # noqa: E402
 from attacks.corruptions import CORRUPTION_TYPES, apply_corruption  # noqa: E402
+from attacks.transfer import TransferHarness  # noqa: E402
 
 _DATASETS_SERVER = "https://datasets-server.huggingface.co"
 
@@ -556,6 +557,173 @@ def _write_preview_grid(poisoned_root: str, records: list, clean_dir: str) -> No
     print(f"  preview grid   : {out}")
 
 
+def build_transfer_set(
+    cfg: dict,
+    surrogate_name: str,
+    pgd_steps: int,
+    pgd_batch: int,
+    force: bool,
+) -> None:
+    """Generate the PGD transfer-attack tensor set on a fixed surrogate.
+
+    Writes four artifacts to ``data/poisoned/transfer/<surrogate>_pgd/``:
+      * clean_batch.pt  — [N, 3, 224, 224] float32, surrogate-preprocessed,  [0,1]
+      * adv_batch.pt    — same shape/dtype/range, PGD-perturbed counterparts
+      * labels.pt       — [N] long, ground-truth ImageNet class indices
+      * manifest.json   — surrogate, epsilon, steps, seed, host env
+
+    The script is idempotent: if ``manifest.json`` already exists it skips
+    unless ``force=True``.
+    """
+    import platform
+    from datetime import datetime
+
+    import torch
+
+    seed = int(cfg["seed"])
+    epsilon = float(cfg["attack"]["epsilon"])
+    step_size = float(cfg["attack"]["pgd_step"])
+    threat_model = cfg["attack"]["threat_model"]
+
+    clean_dir = _abs(cfg["paths"]["clean_set"])
+    out_dir = _abs(os.path.join(cfg["paths"]["data_root"], "poisoned", "transfer",
+                                f"{surrogate_name}_pgd"))
+    manifest_path = os.path.join(out_dir, "manifest.json")
+    if os.path.exists(manifest_path) and not force:
+        print(f"Manifest already exists at {manifest_path} — skipping. "
+              f"Pass --force to overwrite.")
+        return
+    os.makedirs(out_dir, exist_ok=True)
+
+    clean_manifest_path = os.path.join(clean_dir, "manifest.json")
+    if not os.path.exists(clean_manifest_path):
+        raise FileNotFoundError(
+            f"No clean manifest at {clean_manifest_path}. "
+            "Run: python scripts/generate_datasets.py --clean"
+        )
+    with open(clean_manifest_path, "r", encoding="utf-8") as f:
+        clean_manifest = json.load(f)
+
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+
+    print(f"Source    : {clean_manifest_path}  ({clean_manifest['num_images']} images)")
+    print(f"Target    : {out_dir}")
+    print(f"Surrogate : {surrogate_name}  (device={device})")
+    print(f"Threat    : {threat_model}  epsilon={epsilon:.6f} ({epsilon * 255:.2f}/255)")
+    print(f"PGD       : steps={pgd_steps}  step_size={step_size:.6f} ({step_size * 255:.2f}/255)  "
+          f"random_start=True  seed={seed}")
+    print(f"Batch     : {pgd_batch}\n")
+
+    # Seed for reproducibility (PGD's own seed handles random-start noise).
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(seed)
+
+    print("Building surrogate classifier...")
+    from models.classifiers import build_classifier  # lazy: avoid torch import at module load
+    surrogate = build_classifier(surrogate_name, device=device)
+
+    print("Preprocessing clean images through surrogate pipeline...")
+    pil_images = []
+    labels_list = []
+    for rec in tqdm(clean_manifest["images"], desc="loading", leave=False):
+        path = os.path.join(clean_dir, rec["filename"])
+        with Image.open(path) as im:
+            pil_images.append(im.convert("RGB").copy())
+        labels_list.append(int(rec["label"]))
+
+    harness = TransferHarness(
+        surrogate=surrogate,
+        epsilon=epsilon,
+        step_size=step_size,
+        num_steps=pgd_steps,
+        seed=seed,
+        random_start=True,
+    )
+    clean_batch = harness.preprocess_clean(pil_images)
+    labels = torch.tensor(labels_list, dtype=torch.long)
+    print(f"  clean batch tensor: shape={tuple(clean_batch.shape)}  "
+          f"dtype={clean_batch.dtype}  range=[{float(clean_batch.min()):.4f}, "
+          f"{float(clean_batch.max()):.4f}]")
+
+    # Sanity: clean tensors must already be in [0, 1].
+    if float(clean_batch.min()) < -1e-6 or float(clean_batch.max()) > 1 + 1e-6:
+        raise RuntimeError(
+            f"Preprocessed clean batch escaped [0, 1]: "
+            f"min={float(clean_batch.min())}, max={float(clean_batch.max())}"
+        )
+
+    print(f"\nRunning PGD on {clean_batch.shape[0]} images (batch={pgd_batch})...")
+    adv_batch = harness.craft(clean_batch, labels, batch_size=pgd_batch, progress=True)
+
+    print("\nVerifying L-infinity constraint...")
+    max_dev = harness.verify_linf(clean_batch, adv_batch)
+    print(f"  max|adv - clean| = {max_dev:.6f}  (epsilon = {epsilon:.6f})  OK")
+
+    # Range check on the adversarial output.
+    if float(adv_batch.min()) < -1e-6 or float(adv_batch.max()) > 1 + 1e-6:
+        raise RuntimeError(
+            f"Adversarial batch escaped [0, 1]: "
+            f"min={float(adv_batch.min())}, max={float(adv_batch.max())}"
+        )
+
+    print("\nSaving tensors...")
+    # Ensure contiguous + float32; .pt format is small enough at this scale.
+    clean_path = os.path.join(out_dir, "clean_batch.pt")
+    adv_path = os.path.join(out_dir, "adv_batch.pt")
+    labels_path = os.path.join(out_dir, "labels.pt")
+    torch.save(clean_batch.contiguous().float(), clean_path)
+    torch.save(adv_batch.contiguous().float(), adv_path)
+    torch.save(labels.contiguous().long(), labels_path)
+
+    manifest = {
+        "attack": "transfer_pgd",
+        "surrogate": surrogate_name,
+        "threat_model": threat_model,
+        "epsilon": epsilon,
+        "epsilon_255": epsilon * 255,
+        "pgd_step": step_size,
+        "pgd_step_255": step_size * 255,
+        "num_steps": pgd_steps,
+        "random_start": True,
+        "seed": seed,
+        "batch_size": pgd_batch,
+        "num_images": int(clean_batch.shape[0]),
+        "shape": list(clean_batch.shape),
+        "dtype": str(clean_batch.dtype),
+        "pixel_range": [0.0, 1.0],
+        "max_linf_deviation": max_dev,
+        "source_manifest": os.path.relpath(clean_manifest_path, _REPO_ROOT).replace("\\", "/"),
+        "files": {
+            "clean": "clean_batch.pt",
+            "adv": "adv_batch.pt",
+            "labels": "labels.pt",
+        },
+        "generated_utc": datetime.utcnow().strftime("%Y-%m-%d %H:%M:%SZ"),
+        "env": {
+            "torch": torch.__version__,
+            "cuda": torch.version.cuda,
+            "device": device,
+            "gpu": torch.cuda.get_device_name(0) if torch.cuda.is_available() else None,
+            "python": platform.python_version(),
+            "platform": platform.platform(),
+        },
+    }
+    with open(manifest_path, "w", encoding="utf-8") as f:
+        json.dump(manifest, f, indent=2, ensure_ascii=False)
+
+    total_bytes = sum(os.path.getsize(p) for p in (clean_path, adv_path, labels_path))
+    print("\nVerification:")
+    print(f"  files written  : clean_batch.pt, adv_batch.pt, labels.pt, manifest.json")
+    print(f"  total size     : {total_bytes / (1024 * 1024):.1f} MiB")
+    print(f"  num_images     : {clean_batch.shape[0]}")
+    print(f"  shape          : {tuple(clean_batch.shape)}")
+    print(f"  max L-inf dev  : {max_dev:.6f}  (epsilon = {epsilon:.6f})")
+    print(f"\nTransfer set ready at: {out_dir}")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Build benchmark datasets.")
     parser.add_argument("--clean", action="store_true", help="Build the clean set.")
@@ -573,6 +741,34 @@ def main() -> None:
         "--shared-poisoned",
         action="store_true",
         help="Build patch/corruption sets (Phase 1 — not implemented).",
+    )
+    parser.add_argument(
+        "--transfer",
+        action="store_true",
+        help="Build the PGD transfer-attack tensor set on a fixed surrogate.",
+    )
+    parser.add_argument(
+        "--surrogate",
+        type=str,
+        default="resnet50",
+        help="Surrogate model key for --transfer (default: resnet50).",
+    )
+    parser.add_argument(
+        "--pgd-steps",
+        type=int,
+        default=None,
+        help="PGD iterations for --transfer (default: config.attack.pgd_iters).",
+    )
+    parser.add_argument(
+        "--pgd-batch",
+        type=int,
+        default=32,
+        help="Mini-batch size for PGD crafting on the surrogate (default: 32).",
+    )
+    parser.add_argument(
+        "--force",
+        action="store_true",
+        help="Overwrite existing --transfer outputs.",
     )
     parser.add_argument(
         "--corruption-types",
@@ -611,8 +807,8 @@ def main() -> None:
     size = args.size or cfg["dataset"]["benchmark_size"]
     per_class = args.per_class or cfg["dataset"]["per_class"]
 
-    if not (args.clean or args.typographic or args.corruptions or args.shared_poisoned):
-        parser.error("Nothing to do. Pass --clean, --typographic, --corruptions, or --shared-poisoned.")
+    if not (args.clean or args.typographic or args.corruptions or args.shared_poisoned or args.transfer):
+        parser.error("Nothing to do. Pass --clean, --typographic, --corruptions, --transfer, or --shared-poisoned.")
 
     if args.clean:
         build_clean_set(cfg, size=size, per_class=per_class)
@@ -644,6 +840,16 @@ def main() -> None:
             jpeg_quality=args.jpeg_quality,
             crop_size=args.crop_size,
             preview_grid=not args.no_preview,
+        )
+
+    if args.transfer:
+        pgd_steps = args.pgd_steps if args.pgd_steps is not None else int(cfg["attack"]["pgd_iters"])
+        build_transfer_set(
+            cfg,
+            surrogate_name=args.surrogate,
+            pgd_steps=pgd_steps,
+            pgd_batch=args.pgd_batch,
+            force=args.force,
         )
 
     if args.shared_poisoned:
