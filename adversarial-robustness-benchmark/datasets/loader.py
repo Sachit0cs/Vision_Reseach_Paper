@@ -243,6 +243,70 @@ def load_corruptions_dataset(
     return CommonCorruptionsDataset(corruption_type, poisoned_root)
 
 
+class TransferDataset:
+    """Adversarial images crafted on a surrogate model (Phase B transfer attack).
+
+    Built once by ``scripts/generate_datasets.py --transfer`` and stored under
+    ``data/poisoned/transfer/<surrogate>_pgd/``. Exposes clean_batch,
+    adv_batch, and labels_tensor as PyTorch tensors loaded in CPU memory — the
+    full 1000-image set is ~600 MB float32, well within reach on Kaggle T4.
+    """
+
+    def __init__(
+        self,
+        surrogate: str = "resnet50",
+        poisoned_root: str = "data/poisoned/transfer",
+    ):
+        import torch
+
+        root = poisoned_root if os.path.isabs(poisoned_root) else os.path.join(_REPO_ROOT, poisoned_root)
+        sub = os.path.join(root, f"{surrogate}_pgd")
+        manifest_path = os.path.join(sub, "manifest.json")
+        if not os.path.exists(manifest_path):
+            raise FileNotFoundError(
+                f"No transfer manifest at {manifest_path}. "
+                "Run: python scripts/generate_datasets.py --transfer"
+            )
+        with open(manifest_path, "r", encoding="utf-8") as f:
+            self.manifest = json.load(f)
+
+        def _load(fname):
+            path = os.path.join(sub, fname)
+            try:
+                return torch.load(path, weights_only=True)
+            except TypeError:
+                return torch.load(path)
+
+        self.adv_batch = _load("adv_batch.pt")
+        self.clean_batch = _load("clean_batch.pt")
+        self.labels_tensor = _load("labels.pt")
+        self.surrogate = surrogate
+        self.sub_root = sub
+
+    def __len__(self) -> int:
+        return int(self.labels_tensor.shape[0])
+
+    @property
+    def labels(self) -> list[int]:
+        return self.labels_tensor.tolist()
+
+    @property
+    def epsilon(self) -> float:
+        return float(self.manifest.get("epsilon", 8 / 255))
+
+    @property
+    def num_steps(self) -> int:
+        return int(self.manifest.get("num_steps", 20))
+
+
+def load_transfer_dataset(
+    surrogate: str = "resnet50",
+    poisoned_root: str = "data/poisoned/transfer",
+) -> "TransferDataset":
+    """Convenience wrapper returning the transfer-adversarial dataset."""
+    return TransferDataset(surrogate=surrogate, poisoned_root=poisoned_root)
+
+
 def load_cifar100(train: bool = True, download: bool = True, root: str = "data/cifar100"):
     """Load CIFAR-100 for the Phase-4 defense fine-tuning.
 
