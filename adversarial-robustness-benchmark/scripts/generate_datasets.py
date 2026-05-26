@@ -32,7 +32,9 @@ import random
 import sys
 import urllib.request
 
+import numpy as np
 import yaml
+from PIL import Image
 from tqdm import tqdm
 
 # Make the repo root importable so `datasets.sampler` resolves.
@@ -42,6 +44,7 @@ if _REPO_ROOT not in sys.path:
 
 from datasets.sampler import ReservoirPerClass  # noqa: E402
 from attacks.typographic import render_typographic  # noqa: E402
+from attacks.corruptions import CORRUPTION_TYPES, apply_corruption  # noqa: E402
 
 _DATASETS_SERVER = "https://datasets-server.huggingface.co"
 
@@ -325,6 +328,204 @@ def build_typographic_set(
     print(f"\nTypographic set ready at: {poisoned_root}")
 
 
+def _resize_then_center_crop(image: Image.Image, short: int = 256, crop: int = 224) -> Image.Image:
+    """torchvision's canonical ImageNet eval pre-crop: Resize(256) + CenterCrop(224).
+
+    Applied before corruption so the corruption strength matches the Hendrycks
+    severity calibration (which assumes 224x224 inputs).
+    """
+    W, H = image.size
+    scale = short / float(min(W, H))
+    new_W, new_H = max(crop, int(round(W * scale))), max(crop, int(round(H * scale)))
+    resized = image.resize((new_W, new_H), Image.BILINEAR)
+    left = (new_W - crop) // 2
+    upper = (new_H - crop) // 2
+    return resized.crop((left, upper, left + crop, upper + crop))
+
+
+def build_corruptions_set(
+    cfg: dict,
+    corruption_types: list[str],
+    severity: int,
+    jpeg_quality: int,
+    crop_size: int,
+    preview_grid: bool,
+) -> None:
+    """Generate one corrupted variant per (clean image, corruption type).
+
+    The corruption attack is model-agnostic and non-adversarial: each clean
+    image is pre-cropped to ``crop_size`` (the standard ImageNet eval
+    transform), corrupted with the requested type at the requested severity,
+    and saved as a JPEG. One sub-directory per corruption type. A top-level
+    manifest aggregates everything; each sub-directory carries a sibling
+    manifest so a single corruption type can be loaded in isolation.
+
+    Determinism: the per-(image, corruption) RNG is seeded with
+    ``(global_seed, sha1(corruption_type), image_index)`` so two runs with the
+    same seed produce identical pixels, and a single corruption type can be
+    regenerated without re-running the others.
+    """
+    import hashlib
+    from datetime import datetime
+
+    seed = int(cfg["seed"])
+    clean_dir = _abs(cfg["paths"]["clean_set"])
+    poisoned_root = _abs(os.path.join(cfg["paths"]["data_root"], "poisoned", "corruptions"))
+    os.makedirs(poisoned_root, exist_ok=True)
+
+    clean_manifest_path = os.path.join(clean_dir, "manifest.json")
+    if not os.path.exists(clean_manifest_path):
+        raise FileNotFoundError(
+            f"No clean manifest at {clean_manifest_path}. "
+            "Run: python scripts/generate_datasets.py --clean"
+        )
+    with open(clean_manifest_path, "r", encoding="utf-8") as f:
+        clean_manifest = json.load(f)
+
+    classes_path = os.path.join(clean_dir, "imagenet_classes.json")
+    with open(classes_path, "r", encoding="utf-8") as f:
+        class_names = json.load(f)
+
+    print(f"Source : {clean_manifest_path}  ({clean_manifest['num_images']} images)")
+    print(f"Target : {poisoned_root}")
+    print(f"Config : severity={severity}  crop_size={crop_size}  jpeg_quality={jpeg_quality}")
+    print(f"Types  : {corruption_types}  ({len(corruption_types)} of {len(CORRUPTION_TYPES)})")
+    print(f"Seed   : {seed}\n")
+
+    all_records: list[dict] = []
+    total_bytes = 0
+
+    for c_idx, corruption_type in enumerate(corruption_types):
+        sub_root = os.path.join(poisoned_root, corruption_type)
+        images_dir = os.path.join(sub_root, "images")
+        os.makedirs(images_dir, exist_ok=True)
+        # Per-corruption salt: makes each corruption's RNG independent so we
+        # can regenerate a single type later without touching the others.
+        salt = int(hashlib.sha1(corruption_type.encode("utf-8")).hexdigest()[:8], 16)
+        sub_records: list[dict] = []
+
+        for img_idx, rec in enumerate(
+            tqdm(clean_manifest["images"], desc=f"{corruption_type:>18}", leave=False)
+        ):
+            src = os.path.join(clean_dir, rec["filename"])
+            with Image.open(src) as im:
+                im_rgb = im.convert("RGB")
+                cropped = _resize_then_center_crop(im_rgb, short=crop_size + 32, crop=crop_size)
+            rng = np.random.default_rng((seed + salt + img_idx) & 0xFFFFFFFF)
+            corrupted = apply_corruption(cropped, corruption_type, severity=severity, rng=rng)
+            dest_rel = rec["filename"]
+            dest_abs = os.path.join(sub_root, dest_rel)
+            os.makedirs(os.path.dirname(dest_abs), exist_ok=True)
+            Image.fromarray(corrupted).save(
+                dest_abs, format="JPEG", quality=jpeg_quality, optimize=True
+            )
+            total_bytes += os.path.getsize(dest_abs)
+
+            entry = {
+                "id": int(rec["id"]),
+                "filename": dest_rel,
+                "label": int(rec["label"]),
+                "class_name": rec["class_name"],
+            }
+            sub_records.append(entry)
+            all_records.append({**entry, "corruption_type": corruption_type})
+
+        sub_manifest = {
+            "attack": "corruptions",
+            "corruption_type": corruption_type,
+            "severity": severity,
+            "seed": seed,
+            "source_manifest": os.path.relpath(clean_manifest_path, _REPO_ROOT).replace("\\", "/"),
+            "num_images": len(sub_records),
+            "config": {
+                "crop_size": crop_size,
+                "jpeg_quality": jpeg_quality,
+                "implementation": "self_contained_numpy_scipy_pil",
+                "implementation_note": (
+                    "motion_blur/snow/frost/fog use NumPy approximations of the "
+                    "canonical Wand/ImageMagick versions; numbers may not be "
+                    "bit-equivalent to Hendrycks's published ImageNet-C but are "
+                    "calibrated to the same severity ramp."
+                ),
+            },
+            "images": sub_records,
+        }
+        with open(os.path.join(sub_root, "manifest.json"), "w", encoding="utf-8") as f:
+            json.dump(sub_manifest, f, indent=2, ensure_ascii=False)
+        print(f"  [{c_idx + 1:>2}/{len(corruption_types)}] {corruption_type:>18}  "
+              f"wrote {len(sub_records)} images to {sub_root}")
+
+    top_manifest = {
+        "attack": "corruptions",
+        "severity": severity,
+        "seed": seed,
+        "generated_utc": datetime.utcnow().strftime("%Y-%m-%d %H:%M:%SZ"),
+        "source_manifest": os.path.relpath(clean_manifest_path, _REPO_ROOT).replace("\\", "/"),
+        "num_images_per_type": len(clean_manifest["images"]),
+        "corruption_types": corruption_types,
+        "num_corruption_types": len(corruption_types),
+        "num_images_total": len(all_records),
+        "config": {
+            "crop_size": crop_size,
+            "jpeg_quality": jpeg_quality,
+            "implementation": "self_contained_numpy_scipy_pil",
+        },
+    }
+    with open(os.path.join(poisoned_root, "manifest.json"), "w", encoding="utf-8") as f:
+        json.dump(top_manifest, f, indent=2, ensure_ascii=False)
+
+    print("\nVerification:")
+    print(f"  images written : {len(all_records)}  "
+          f"({len(corruption_types)} types x {len(clean_manifest['images'])} images)")
+    print(f"  total size     : {total_bytes / (1024 * 1024):.1f} MiB  "
+          f"({total_bytes / max(len(all_records), 1) / 1024:.1f} KiB / image)")
+
+    if preview_grid:
+        _write_corruptions_preview(poisoned_root, corruption_types, clean_dir, clean_manifest)
+
+    print(f"\nCorruptions set ready at: {poisoned_root}")
+
+
+def _write_corruptions_preview(
+    poisoned_root: str,
+    corruption_types: list[str],
+    clean_dir: str,
+    clean_manifest: dict,
+) -> None:
+    """Write a preview PNG showing one image under every corruption type."""
+    from PIL import Image, ImageDraw
+
+    if not clean_manifest["images"]:
+        return
+    sample_rec = clean_manifest["images"][0]
+    cell = 192
+    cols = 4
+    rows = (len(corruption_types) + 1 + cols - 1) // cols  # +1 for the clean cell
+    gap = 8
+    cap_h = 24
+    grid_w = cols * cell + (cols + 1) * gap
+    grid_h = rows * (cell + cap_h) + (rows + 1) * gap
+    grid = Image.new("RGB", (grid_w, grid_h), (32, 32, 32))
+    d = ImageDraw.Draw(grid)
+
+    panels: list[tuple[str, str]] = [("clean", os.path.join(clean_dir, sample_rec["filename"]))]
+    for ct in corruption_types:
+        panels.append((ct, os.path.join(poisoned_root, ct, sample_rec["filename"])))
+
+    for i, (caption, path) in enumerate(panels):
+        row, col = divmod(i, cols)
+        x = gap + col * (cell + gap)
+        y = gap + row * (cell + cap_h + gap)
+        if os.path.exists(path):
+            im = Image.open(path).convert("RGB").resize((cell, cell))
+            grid.paste(im, (x, y))
+        d.text((x + 4, y + cell + 4), caption[:24], fill=(220, 220, 220))
+
+    out = os.path.join(poisoned_root, "preview_grid.png")
+    grid.save(out)
+    print(f"  preview grid   : {out}")
+
+
 def _write_preview_grid(poisoned_root: str, records: list, clean_dir: str) -> None:
     """Write a 4x4 PNG grid pairing clean and poisoned images for quick eyeball."""
     from PIL import Image, ImageDraw
@@ -364,9 +565,32 @@ def main() -> None:
         help="Build the typographic-overlay poisoned set (CPU-only, ~seconds).",
     )
     parser.add_argument(
+        "--corruptions",
+        action="store_true",
+        help="Build the 15-type common-corruptions set (CPU-only, ~1 hr at severity 3).",
+    )
+    parser.add_argument(
         "--shared-poisoned",
         action="store_true",
         help="Build patch/corruption sets (Phase 1 — not implemented).",
+    )
+    parser.add_argument(
+        "--corruption-types",
+        type=str,
+        default=None,
+        help="Comma-separated subset of corruption types (default: all 15).",
+    )
+    parser.add_argument(
+        "--severity",
+        type=int,
+        default=3,
+        help="ImageNet-C severity level for --corruptions (1-5, default 3).",
+    )
+    parser.add_argument(
+        "--crop-size",
+        type=int,
+        default=224,
+        help="Pre-crop size for --corruptions (matches Hendrycks severity calibration).",
     )
     parser.add_argument("--size", type=int, default=None, help="Total clean images.")
     parser.add_argument("--per-class", type=int, default=None, help="Images per class.")
@@ -387,8 +611,8 @@ def main() -> None:
     size = args.size or cfg["dataset"]["benchmark_size"]
     per_class = args.per_class or cfg["dataset"]["per_class"]
 
-    if not (args.clean or args.typographic or args.shared_poisoned):
-        parser.error("Nothing to do. Pass --clean, --typographic, or --shared-poisoned.")
+    if not (args.clean or args.typographic or args.corruptions or args.shared_poisoned):
+        parser.error("Nothing to do. Pass --clean, --typographic, --corruptions, or --shared-poisoned.")
 
     if args.clean:
         build_clean_set(cfg, size=size, per_class=per_class)
@@ -401,6 +625,24 @@ def main() -> None:
             padding_frac=args.padding_frac,
             opacity=args.opacity,
             jpeg_quality=args.jpeg_quality,
+            preview_grid=not args.no_preview,
+        )
+
+    if args.corruptions:
+        if args.corruption_types:
+            types = [t.strip() for t in args.corruption_types.split(",")]
+            unknown = [t for t in types if t not in CORRUPTION_TYPES]
+            if unknown:
+                parser.error(f"unknown corruption types: {unknown}. "
+                             f"Choose from {list(CORRUPTION_TYPES)}.")
+        else:
+            types = list(CORRUPTION_TYPES)
+        build_corruptions_set(
+            cfg,
+            corruption_types=types,
+            severity=args.severity,
+            jpeg_quality=args.jpeg_quality,
+            crop_size=args.crop_size,
             preview_grid=not args.no_preview,
         )
 

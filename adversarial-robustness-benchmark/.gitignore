@@ -1,13 +1,18 @@
-# Datasets — track the committed clean benchmark set and the typographic
-# poisoned set (one shared, model-agnostic poisoned set generated once and
-# checked in). The parquet cache, CIFAR-100 and other future poisoned sets
-# (patch, corruptions) stay ignored.
+# Datasets — track the committed clean benchmark set, the typographic
+# poisoned set, and the corruption-set MANIFESTS (15,000 JPEGs themselves
+# are regenerated locally via `scripts/generate_datasets.py --corruptions`).
+# The parquet cache and CIFAR-100 stay ignored.
 data/*
 !data/.gitkeep
 !data/clean/
 !data/poisoned/
 data/poisoned/*
 !data/poisoned/typographic/
+!data/poisoned/corruptions/
+# Corruption-axis: ~450 MiB of regenerable images. Manifests + dir structure
+# are tracked so the layout is reproducible without the binaries.
+data/poisoned/corruptions/*/images/
+data/poisoned/corruptions/preview_grid.png
 
 # Exported attack images (inspection only — large, regenerable, not tracked)
 attack_previews/

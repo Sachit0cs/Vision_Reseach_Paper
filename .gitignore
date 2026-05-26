@@ -12,3 +12,6 @@ venv/
 Thumbs.db
 .vscode/
 .idea/
+
+COUNCIL_PLAN.md
+plan.md

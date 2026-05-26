@@ -177,6 +177,72 @@ def load_typographic_dataset(
     return TypographicDataset(poisoned_dir)
 
 
+class CommonCorruptionsDataset:
+    """The common-corruptions poisoned set (Phase 1, Axis A — model-agnostic).
+
+    Built once by ``scripts/generate_datasets.py --corruptions`` and stored
+    under ``data/poisoned/corruptions/``. One sub-dataset per corruption
+    type — pass ``corruption_type`` at construction. Iterating yields
+    ``(PIL.Image, true_label)`` pairs, matching the clean dataset's
+    interface.
+
+    The manifest at the corruption root (``data/poisoned/corruptions/manifest.json``)
+    records every corruption type generated, the severity, the seed, and the
+    full per-image record. Individual per-corruption manifests live at
+    ``<corruption_root>/<corruption_type>/manifest.json`` and mirror the
+    per-image structure exactly so a single corruption type can be loaded in
+    isolation without parsing the top-level manifest.
+    """
+
+    def __init__(
+        self,
+        corruption_type: str,
+        poisoned_root: str = "data/poisoned/corruptions",
+    ):
+        root = poisoned_root if os.path.isabs(poisoned_root) else os.path.join(_REPO_ROOT, poisoned_root)
+        self.root = root
+        self.corruption_type = corruption_type
+        sub = os.path.join(root, corruption_type)
+        manifest_path = os.path.join(sub, "manifest.json")
+        if not os.path.exists(manifest_path):
+            raise FileNotFoundError(
+                f"No corruption manifest at {manifest_path}. "
+                "Run: python scripts/generate_datasets.py --corruptions"
+            )
+        with open(manifest_path, "r", encoding="utf-8") as f:
+            self.manifest = json.load(f)
+        self.records = self.manifest["images"]
+        self.config = self.manifest.get("config", {})
+        self.severity = int(self.manifest.get("severity", -1))
+        self.seed = int(self.manifest.get("seed", -1))
+        self.sub_root = sub
+
+    def __len__(self) -> int:
+        return len(self.records)
+
+    def __getitem__(self, i: int) -> tuple[Image.Image, int]:
+        rec = self.records[i]
+        path = os.path.join(self.sub_root, rec["filename"])
+        image = Image.open(path).convert("RGB")
+        return image, int(rec["label"])
+
+    def __iter__(self):
+        for i in range(len(self)):
+            yield self[i]
+
+    @property
+    def labels(self) -> list[int]:
+        return [int(r["label"]) for r in self.records]
+
+
+def load_corruptions_dataset(
+    corruption_type: str,
+    poisoned_root: str = "data/poisoned/corruptions",
+) -> CommonCorruptionsDataset:
+    """Convenience wrapper returning a single-corruption-type dataset."""
+    return CommonCorruptionsDataset(corruption_type, poisoned_root)
+
+
 def load_cifar100(train: bool = True, download: bool = True, root: str = "data/cifar100"):
     """Load CIFAR-100 for the Phase-4 defense fine-tuning.
 

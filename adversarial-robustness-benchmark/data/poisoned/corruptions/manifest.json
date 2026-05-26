@@ -1,0 +1,32 @@
+{
+  "attack": "corruptions",
+  "severity": 3,
+  "seed": 42,
+  "generated_utc": "2026-05-26 07:29:01Z",
+  "source_manifest": "data/clean/manifest.json",
+  "num_images_per_type": 1000,
+  "corruption_types": [
+    "gaussian_noise",
+    "shot_noise",
+    "impulse_noise",
+    "defocus_blur",
+    "glass_blur",
+    "motion_blur",
+    "zoom_blur",
+    "snow",
+    "frost",
+    "fog",
+    "brightness",
+    "contrast",
+    "elastic_transform",
+    "pixelate",
+    "jpeg_compression"
+  ],
+  "num_corruption_types": 15,
+  "num_images_total": 15000,
+  "config": {
+    "crop_size": 224,
+    "jpeg_quality": 90,
+    "implementation": "self_contained_numpy_scipy_pil"
+  }
+}
