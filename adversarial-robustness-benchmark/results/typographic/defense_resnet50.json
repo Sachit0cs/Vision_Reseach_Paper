@@ -1,0 +1,36 @@
+{
+  "model": "defense_resnet50",
+  "attack": "typographic",
+  "seed": 42,
+  "host_env": {
+    "gpu": "Tesla T4",
+    "cuda_available": true,
+    "torch": "2.10.0+cu128",
+    "torchvision": "0.25.0+cu128",
+    "transformers": "5.0.0",
+    "pillow": "11.3.0"
+  },
+  "dataset_size": 1000,
+  "clean_correct": 60,
+  "robust_correct": 58,
+  "tasr_correct": 2,
+  "clean_accuracy": 0.06,
+  "robust_accuracy": 0.058,
+  "targeted_attack_success_rate": 0.002,
+  "fooling_rate": 0.11666666666666667,
+  "n_originally_correct": 60,
+  "n_flipped_from_correct": 7,
+  "typographic_config": {
+    "font_size_frac": 0.12,
+    "position": "top",
+    "padding_frac": 0.04,
+    "opacity": 1.0,
+    "jpeg_quality": 90,
+    "text_form": "lowercase_first_synonym"
+  },
+  "wall_clock_s": {
+    "preprocess": 6.06018815599964,
+    "clean_eval": 3.4168568850000156,
+    "typographic_eval": 3.166172163000738
+  }
+}

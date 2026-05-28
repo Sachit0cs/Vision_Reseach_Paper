@@ -1,0 +1,49 @@
+{
+  "config": {
+    "base_arch": "resnet50",
+    "num_classes": 100,
+    "images_per_class": 200,
+    "epochs": 3,
+    "batch_size": 64,
+    "lr": 0.001,
+    "momentum": 0.9,
+    "weight_decay": 0.0005,
+    "pgd_epsilon": 0.03137254901960784,
+    "pgd_alpha": 0.00784313725490196,
+    "pgd_steps": 5,
+    "num_workers": 2,
+    "checkpoint_dir": "models/checkpoints",
+    "train_dir": "/kaggle/input/imagenet100/train"
+  },
+  "seed": 42,
+  "train_dir": "/kaggle/working/imagenet100_train",
+  "epochs_planned": 3,
+  "device": "cuda",
+  "epochs": [
+    {
+      "epoch": 1,
+      "mean_adv_loss": 6.992334136596093,
+      "mean_adv_acc": 0.02759415064102564,
+      "num_batches": 312,
+      "num_samples": 19968,
+      "wall_clock_s": 990.5248367800002
+    },
+    {
+      "epoch": 2,
+      "mean_adv_loss": 5.972424348195394,
+      "mean_adv_acc": 0.036007612179487176,
+      "num_batches": 312,
+      "num_samples": 19968,
+      "wall_clock_s": 1002.9288635830003
+    },
+    {
+      "epoch": 3,
+      "mean_adv_loss": 5.2536371029340305,
+      "mean_adv_acc": 0.04682491987179487,
+      "num_batches": 312,
+      "num_samples": 19968,
+      "wall_clock_s": 1006.5314383220002
+    }
+  ],
+  "run_started_at": 1779973865.8204648
+}

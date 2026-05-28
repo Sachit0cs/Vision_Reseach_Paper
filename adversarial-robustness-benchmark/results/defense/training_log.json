@@ -1,0 +1,89 @@
+{
+  "config": {
+    "base_arch": "resnet50",
+    "num_classes": 100,
+    "images_per_class": 200,
+    "epochs": 3,
+    "batch_size": 64,
+    "lr": 0.001,
+    "momentum": 0.9,
+    "weight_decay": 0.0005,
+    "pgd_epsilon": 0.03137254901960784,
+    "pgd_alpha": 0.00784313725490196,
+    "pgd_steps": 5,
+    "num_workers": 2,
+    "checkpoint_dir": "models/checkpoints",
+    "train_dir": "/kaggle/input/imagenet100/train"
+  },
+  "seed": 42,
+  "train_dir": "/kaggle/working/imagenet100_train",
+  "epochs_planned": 8,
+  "device": "cuda",
+  "epochs": [
+    {
+      "epoch": 1,
+      "mean_adv_loss": 5.108459307597234,
+      "mean_adv_acc": 0.045272435897435896,
+      "num_batches": 312,
+      "num_samples": 19968,
+      "wall_clock_s": 979.7397274969999
+    },
+    {
+      "epoch": 2,
+      "mean_adv_loss": 4.030085622500151,
+      "mean_adv_acc": 0.11989182692307693,
+      "num_batches": 312,
+      "num_samples": 19968,
+      "wall_clock_s": 1000.3411042570006
+    },
+    {
+      "epoch": 3,
+      "mean_adv_loss": 3.7173451360983725,
+      "mean_adv_acc": 0.16596554487179488,
+      "num_batches": 312,
+      "num_samples": 19968,
+      "wall_clock_s": 997.3919620470006
+    },
+    {
+      "epoch": 4,
+      "mean_adv_loss": 3.515707478309289,
+      "mean_adv_acc": 0.20087139423076922,
+      "num_batches": 312,
+      "num_samples": 19968,
+      "wall_clock_s": 1002.3302516240001
+    },
+    {
+      "epoch": 5,
+      "mean_adv_loss": 3.3883784787777143,
+      "mean_adv_acc": 0.22400841346153846,
+      "num_batches": 312,
+      "num_samples": 19968,
+      "wall_clock_s": 999.4848093769997
+    },
+    {
+      "epoch": 6,
+      "mean_adv_loss": 3.290010766341136,
+      "mean_adv_acc": 0.2386318108974359,
+      "num_batches": 312,
+      "num_samples": 19968,
+      "wall_clock_s": 1001.1642351319988
+    },
+    {
+      "epoch": 7,
+      "mean_adv_loss": 3.200247669067138,
+      "mean_adv_acc": 0.2594651442307692,
+      "num_batches": 312,
+      "num_samples": 19968,
+      "wall_clock_s": 996.5011570039987
+    },
+    {
+      "epoch": 8,
+      "mean_adv_loss": 3.123679832770274,
+      "mean_adv_acc": 0.2717848557692308,
+      "num_batches": 312,
+      "num_samples": 19968,
+      "wall_clock_s": 996.5795412010011
+    }
+  ],
+  "run_started_at": 1779979140.73542
+}
