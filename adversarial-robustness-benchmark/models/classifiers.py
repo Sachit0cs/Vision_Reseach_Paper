@@ -168,11 +168,20 @@ def _imagenet_categories() -> list[str]:
     return list(ResNet50_Weights.DEFAULT.meta["categories"])
 
 
+_DEFENSE_KEY = "defense_resnet50"
+
+
 def build_classifier(name: str, device: str = "cpu") -> BaseClassifier:
     """Factory: short model key -> BaseClassifier instance."""
     if name in _TV_SPECS:
         return TorchVisionClassifier(name, device)
     if name == _CLIP_KEY:
         return ClipZeroShotClassifier(device=device, categories=_imagenet_categories())
-    known = sorted(_TV_SPECS) + [_CLIP_KEY]
+    if name == _DEFENSE_KEY:
+        # Imported lazily so the defense_module.py import does not run (and
+        # thus does not require a checkpoint to exist) for the 7 baselines.
+        from .defense_module import DefenseModel
+
+        return DefenseModel(device=device)
+    known = sorted(_TV_SPECS) + [_CLIP_KEY, _DEFENSE_KEY]
     raise ValueError(f"Unknown model key '{name}'. Known keys: {known}")

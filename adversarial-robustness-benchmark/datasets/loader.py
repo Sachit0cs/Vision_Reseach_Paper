@@ -317,3 +317,159 @@ def load_cifar100(train: bool = True, download: bool = True, root: str = "data/c
 
     abs_root = root if os.path.isabs(root) else os.path.join(_REPO_ROOT, root)
     return tv_datasets.CIFAR100(root=abs_root, train=train, download=download)
+
+
+# --- ImageNet-100 training subset (Phase C — defense fine-tuning) -----------
+
+# Standard public mapping of ImageNet 1000-class index -> [wnid, human_name].
+# Mirrors the file that ships with Keras applications + every pretrained-model
+# zoo since 2015; cached locally on first use so the train script does not need
+# network access on every run.
+_IMAGENET_CLASS_INDEX_URL = (
+    "https://storage.googleapis.com/download.tensorflow.org/data/"
+    "imagenet_class_index.json"
+)
+_IMAGENET_CLASS_INDEX_PATH = os.path.join(
+    _REPO_ROOT, "data", "imagenet_class_index.json"
+)
+
+
+def _ensure_imagenet_class_index() -> dict:
+    """Return {"0": ["n01440764", "tench"], ...} — download once, cache forever."""
+    if not os.path.exists(_IMAGENET_CLASS_INDEX_PATH):
+        import urllib.request
+
+        os.makedirs(os.path.dirname(_IMAGENET_CLASS_INDEX_PATH), exist_ok=True)
+        urllib.request.urlretrieve(_IMAGENET_CLASS_INDEX_URL, _IMAGENET_CLASS_INDEX_PATH)
+    with open(_IMAGENET_CLASS_INDEX_PATH, "r", encoding="utf-8") as f:
+        return json.load(f)
+
+
+def _wnid_to_imagenet_idx() -> dict:
+    """{'n01440764': 0, 'n01443537': 1, ...} — the inverse of the class index."""
+    idx = _ensure_imagenet_class_index()
+    return {wnid: int(i) for i, (wnid, _name) in idx.items()}
+
+
+class ImageNetTrainSubset:
+    """Per-class limited view over a WNID-folder ImageNet train tree.
+
+    Expects ``train_dir`` to be an ImageFolder-style tree with WNID folder
+    names (e.g. ``train_dir/n01440764/img_001.JPEG``). This is the layout
+    used by the official ImageNet release and every popular Kaggle mirror
+    (``ambityga/imagenet100``, ``ifigotin/imagenetmini-1000``, ...).
+
+    The first ``num_classes`` WNIDs that appear in the tree (sorted) are
+    selected, and ``images_per_class`` images per class are kept (seeded
+    random sample if more are available). Total length = num_classes *
+    images_per_class, modulo classes with too few images.
+
+    Each item is ``(image_tensor_0_1, imagenet_label_0_999)``. Labels are
+    the standard ImageNet 1000-class indices (so a torchvision pretrained
+    ResNet-50 can be fine-tuned on this without any head surgery). The
+    [0,1] pixel-space convention matches every classifier in this repo —
+    normalization happens inside the model's ``logits``.
+    """
+
+    def __init__(
+        self,
+        train_dir: str,
+        num_classes: int = 100,
+        images_per_class: int = 200,
+        seed: int = 42,
+        image_size: int = 224,
+        augment: bool = True,
+    ):
+        import random
+
+        from PIL import Image as _Image
+
+        if not os.path.isdir(train_dir):
+            raise FileNotFoundError(
+                f"ImageNet train directory not found: {train_dir}. "
+                "On Kaggle, add an ImageNet-100 dataset (e.g. ambityga/imagenet100) "
+                "and pass --train-dir /kaggle/input/<slug>/train."
+            )
+
+        wnid_to_idx = _wnid_to_imagenet_idx()
+        available = sorted(
+            d for d in os.listdir(train_dir)
+            if os.path.isdir(os.path.join(train_dir, d)) and d in wnid_to_idx
+        )
+        if len(available) < num_classes:
+            raise RuntimeError(
+                f"Found only {len(available)} valid WNID folders under {train_dir}, "
+                f"need at least {num_classes}. Check the dataset layout."
+            )
+        selected = available[:num_classes]
+
+        rng = random.Random(seed)
+        records: list[tuple[str, int]] = []
+        for wnid in selected:
+            label = wnid_to_idx[wnid]
+            class_dir = os.path.join(train_dir, wnid)
+            files = sorted(
+                os.path.join(class_dir, f) for f in os.listdir(class_dir)
+                if not f.startswith(".")
+            )
+            if len(files) > images_per_class:
+                files = sorted(rng.sample(files, images_per_class))
+            records.extend((p, label) for p in files)
+
+        # Stable per-sample shuffle so DataLoader(shuffle=True) sees a mixed
+        # class distribution from the start of epoch 0.
+        rng.shuffle(records)
+
+        # Build train transforms — augment for training, plain resize+crop for
+        # eval/Gate-C. ToTensor() lands at [0,1]; NO normalization here.
+        from torchvision import transforms as T
+
+        if augment:
+            self._transform = T.Compose([
+                T.RandomResizedCrop(image_size),
+                T.RandomHorizontalFlip(),
+                T.ToTensor(),
+            ])
+        else:
+            self._transform = T.Compose([
+                T.Resize(256, antialias=True),
+                T.CenterCrop(image_size),
+                T.ToTensor(),
+            ])
+
+        self.records = records
+        self.train_dir = train_dir
+        self.selected_wnids = selected
+        self.num_classes = num_classes
+        self.images_per_class = images_per_class
+        self.seed = seed
+        self._Image = _Image
+
+    def __len__(self) -> int:
+        return len(self.records)
+
+    def __getitem__(self, i: int):
+        path, label = self.records[i]
+        image = self._Image.open(path).convert("RGB")
+        return self._transform(image), int(label)
+
+    @property
+    def labels(self) -> list[int]:
+        return [int(l) for _, l in self.records]
+
+
+def load_imagenet_train_subset(
+    train_dir: str,
+    num_classes: int = 100,
+    images_per_class: int = 200,
+    seed: int = 42,
+    augment: bool = True,
+) -> ImageNetTrainSubset:
+    """Return an ImageNet training subset for Phase-C adversarial fine-tuning."""
+    return ImageNetTrainSubset(
+        train_dir=train_dir,
+        num_classes=num_classes,
+        images_per_class=images_per_class,
+        seed=seed,
+        augment=augment,
+    )

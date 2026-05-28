@@ -57,3 +57,23 @@ robustbench_model:
   name: Salman2020Do_R50
   threat_model: Linf
   dataset: imagenet
+
+# Phase C — defense model (Madry-style PGD adversarial fine-tuning).
+defense:
+  base_arch: resnet50
+  num_classes: 100              # ImageNet classes to fine-tune on
+  images_per_class: 200         # ~20k training images total
+  epochs: 3
+  batch_size: 64
+  lr: 0.001                     # low for fine-tune (vs Madry's 0.1 from-scratch)
+  momentum: 0.9
+  weight_decay: 5.0e-4
+  pgd_epsilon: 0.03137254901960784   # 8/255 — same as eval threat model
+  pgd_alpha: 0.00784313725490196     # 2/255
+  pgd_steps: 5                       # cheaper than eval-time PGD-20
+  num_workers: 2
+  checkpoint_dir: models/checkpoints
+  # Default training-data location — override with --train-dir on the CLI.
+  # On Kaggle, add the `ambityga/imagenet100` dataset (or similar) and point
+  # this at the WNID-folder root.
+  train_dir: /kaggle/input/imagenet100/train

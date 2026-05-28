@@ -40,4 +40,13 @@ Thumbs.db
 # (deterministic on seed+surrogate); kept out of git to avoid LFS bandwidth
 data/poisoned/transfer/
 
+# Phase C defense — checkpoints are ~100 MB each (ResNet-50 fp32). Hosted on
+# Kaggle Dataset / Hugging Face; downloaded into models/checkpoints/ on demand.
+models/checkpoints/*.pt
+models/checkpoints/*.pth
+
+# Phase C ImageNet class-index mapping — downloaded once from a stable mirror
+# by datasets.loader._ensure_imagenet_class_index() if not already present.
+data/imagenet_class_index.json
+
 .claude/
