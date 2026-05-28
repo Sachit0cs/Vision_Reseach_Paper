@@ -1,0 +1,28 @@
+{
+  "model": "efficientnet_b0",
+  "surrogate": "resnet50",
+  "attack": "transfer_pgd",
+  "is_white_box": false,
+  "epsilon": 0.03137254901960784,
+  "num_steps": 20,
+  "seed": 42,
+  "dataset_size": 1000,
+  "clean_correct": 748,
+  "robust_correct": 623,
+  "clean_accuracy": 0.748,
+  "transfer_robust_accuracy": 0.623,
+  "accuracy_drop": 0.125,
+  "n_originally_correct": 748,
+  "n_flipped_from_correct": 139,
+  "fooling_rate": 0.1858288770053476,
+  "host_env": {
+    "gpu": "Tesla T4",
+    "cuda_available": true,
+    "torch": "2.10.0+cu128",
+    "torchvision": "0.25.0+cu128"
+  },
+  "wall_clock_s": {
+    "clean_eval": 1.402588987999934,
+    "adv_eval": 1.373527822000142
+  }
+}

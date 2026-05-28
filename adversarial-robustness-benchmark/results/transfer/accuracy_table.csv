@@ -1,0 +1,8 @@
+model,is_white_box,clean_accuracy,transfer_robust_accuracy,accuracy_drop,fooling_rate
+resnet50,True,0.7810,0.0030,0.7780,0.9962
+vgg16,False,0.6950,0.4780,0.2170,0.3266
+convnext_tiny,False,0.7830,0.6380,0.1450,0.1980
+vit_b_16,False,0.7960,0.7470,0.0490,0.0791
+swin_t,False,0.7720,0.6610,0.1110,0.1606
+efficientnet_b0,False,0.7480,0.6230,0.1250,0.1858
+clip_vit_b16,False,0.6280,0.5320,0.0960,0.2054

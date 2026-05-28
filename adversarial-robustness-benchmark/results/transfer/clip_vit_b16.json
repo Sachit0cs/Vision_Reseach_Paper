@@ -1,0 +1,28 @@
+{
+  "model": "clip_vit_b16",
+  "surrogate": "resnet50",
+  "attack": "transfer_pgd",
+  "is_white_box": false,
+  "epsilon": 0.03137254901960784,
+  "num_steps": 20,
+  "seed": 42,
+  "dataset_size": 1000,
+  "clean_correct": 628,
+  "robust_correct": 532,
+  "clean_accuracy": 0.628,
+  "transfer_robust_accuracy": 0.532,
+  "accuracy_drop": 0.09599999999999997,
+  "n_originally_correct": 628,
+  "n_flipped_from_correct": 129,
+  "fooling_rate": 0.2054140127388535,
+  "host_env": {
+    "gpu": "Tesla T4",
+    "cuda_available": true,
+    "torch": "2.10.0+cu128",
+    "torchvision": "0.25.0+cu128"
+  },
+  "wall_clock_s": {
+    "clean_eval": 13.320700100000067,
+    "adv_eval": 14.637844057000166
+  }
+}

@@ -1,0 +1,28 @@
+{
+  "model": "vgg16",
+  "surrogate": "resnet50",
+  "attack": "transfer_pgd",
+  "is_white_box": false,
+  "epsilon": 0.03137254901960784,
+  "num_steps": 20,
+  "seed": 42,
+  "dataset_size": 1000,
+  "clean_correct": 695,
+  "robust_correct": 478,
+  "clean_accuracy": 0.695,
+  "transfer_robust_accuracy": 0.478,
+  "accuracy_drop": 0.21699999999999997,
+  "n_originally_correct": 695,
+  "n_flipped_from_correct": 227,
+  "fooling_rate": 0.32661870503597124,
+  "host_env": {
+    "gpu": "Tesla T4",
+    "cuda_available": true,
+    "torch": "2.10.0+cu128",
+    "torchvision": "0.25.0+cu128"
+  },
+  "wall_clock_s": {
+    "clean_eval": 6.0462681920000705,
+    "adv_eval": 6.386185927000042
+  }
+}

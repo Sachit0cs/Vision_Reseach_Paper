@@ -1,0 +1,39 @@
+{
+  "resnet50_self_transfer_vs_gradient_pgd": {
+    "transfer_robust_accuracy": 0.003,
+    "gradient_pgd_robust_accuracy": 0.004,
+    "absolute_diff": 0.001,
+    "passed": true,
+    "note": "Gate B: self-transfer should match gradient PGD within \u00b10.005. Larger diff means different images are being sampled or a different PGD random seed was used."
+  },
+  "non_surrogate_transfer_drops": {
+    "vgg16": 0.21699999999999997,
+    "convnext_tiny": 0.14500000000000002,
+    "vit_b_16": 0.049000000000000044,
+    "swin_t": 0.11099999999999999,
+    "efficientnet_b0": 0.125,
+    "clip_vit_b16": 0.09599999999999997
+  },
+  "gate_b_transfer_coverage": {
+    "n_non_surrogate": 6,
+    "n_with_gt10pct_drop": 4,
+    "models_with_gt10pct_drop": [
+      "vgg16",
+      "convnext_tiny",
+      "swin_t",
+      "efficientnet_b0"
+    ],
+    "passed": true,
+    "note": "Gate B requires \u22654/6 non-surrogate models show >10% accuracy drop."
+  },
+  "models_reported": [
+    "clip_vit_b16",
+    "convnext_tiny",
+    "efficientnet_b0",
+    "resnet50",
+    "swin_t",
+    "vgg16",
+    "vit_b_16"
+  ],
+  "all_models_present": true
+}
