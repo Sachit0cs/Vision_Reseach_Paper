@@ -20,8 +20,12 @@ For each batch:
   1. INNER MAX — PGD-5 against the CURRENT model state with BN in eval mode
      (running stats frozen during the attack — deliberate, avoids polluting BN
      statistics with the unrolled adversarial forward passes).
-  2. OUTER MIN — train-mode CE loss on the adversarial images only (plain
-     Madry recipe; no clean-mix, no TRADES KL-regularizer).
+  2. OUTER MIN — CE loss on the adversarial images only (plain Madry recipe; no
+     clean-mix, no TRADES KL-regularizer). With ``freeze_bn`` (default) the
+     forward keeps BN running stats pinned at the pretrained clean values so they
+     are never dragged toward the adversarial distribution — the fix for the
+     clean-accuracy collapse that lowering the LR could not cure. Optional global
+     gradient clipping (``grad_clip_norm``) absorbs early adversarial-grad spikes.
 
 The classifier wrapper from ``models/classifiers.py`` is reused as-is so the
 training loop sees the same preprocessing + normalization the benchmark uses
@@ -39,6 +43,10 @@ Usage:
     python scripts/train_defense.py --train-dir /path/to/imagenet/train   # 1000 WNID folders
     python scripts/train_defense.py --resume models/checkpoints/defense_epoch_1.pt
     python scripts/train_defense.py --epochs 5 --batch-size 32   # OOM fallback
+    # cheap collapse-diagnostic: auto-abort if instantaneous clean acc craters
+    python scripts/train_defense.py --images-per-class 50 --abort-clean-below 0.3
+    # A/B the BN fix (reproduce the old collapse):
+    python scripts/train_defense.py --no-freeze-bn --abort-clean-below 0.3
 """
 
 from __future__ import annotations
@@ -49,6 +57,7 @@ import os
 import random
 import sys
 import time
+from collections import deque
 
 import numpy as np
 import torch
@@ -82,14 +91,56 @@ def _abs(path: str) -> str:
     return path if os.path.isabs(path) else os.path.join(_REPO_ROOT, path)
 
 
-def train_one_epoch(classifier, loader, pgd, optimizer, device, epoch_idx):
-    """One full pass over the loader; returns per-epoch loss + clean/adv top-1."""
+def set_bn_eval(model) -> None:
+    """Put every BatchNorm module in eval mode (freeze running_mean/var).
+
+    The affine params (weight/bias) still receive gradients and train normally —
+    ONLY the running statistics are frozen.
+
+    Why this is the fix: the model is fine-tuned on ADVERSARIAL images. In the
+    default ``model.train()`` mode, BN drags running_mean/var toward the
+    adversarial distribution, while clean accuracy (and the eval-time benchmark)
+    is read in ``model.eval()`` using those corrupted stats. That single-BN
+    adversarial-training pathology craters clean accuracy within one epoch at
+    *every* learning rate (lowering the LR only delays it). Pinning BN at the
+    pretrained clean statistics keeps train- and eval-time normalization
+    consistent and stops the feedback loop.
+    """
+    for m in model.modules():
+        if isinstance(m, torch.nn.modules.batchnorm._BatchNorm):
+            m.eval()
+
+
+class CleanCollapse(RuntimeError):
+    """Raised to abort early when instantaneous clean accuracy craters."""
+
+
+def train_one_epoch(classifier, loader, pgd, optimizer, device, epoch_idx,
+                    freeze_bn=True, grad_clip_norm=None,
+                    abort_clean_below=None, abort_after_batch=200,
+                    inst_window=20):
+    """One full pass over the loader; returns per-epoch loss + clean/adv top-1.
+
+    freeze_bn          keep BN running stats frozen during the training forward
+                       (see ``set_bn_eval`` — the primary fix for the collapse).
+    grad_clip_norm     max global grad norm (None disables clipping).
+    abort_clean_below  if set, raise ``CleanCollapse`` once the windowed
+                       *instantaneous* clean acc falls below this AFTER
+                       ``abort_after_batch`` batches (saves GPU on a collapse).
+    inst_window        number of recent batches for the instantaneous metrics.
+    """
     model = classifier.model
+    params = [p for p in model.parameters() if p.requires_grad]
     total_loss = 0.0
     total_adv_correct = 0
     total_clean_correct = 0
     total_samples = 0
     n_batches = 0
+    # Sliding windows of (correct, n) per batch -> true INSTANTANEOUS accuracy.
+    # The cumulative epoch means lag badly and hide an in-progress collapse, so
+    # we surface a windowed value that reacts within ~inst_window batches.
+    win_clean = deque(maxlen=inst_window)
+    win_adv = deque(maxlen=inst_window)
     t0 = time.perf_counter()
 
     pbar = tqdm(loader, desc=f"epoch {epoch_idx}", leave=False)
@@ -98,42 +149,61 @@ def train_one_epoch(classifier, loader, pgd, optimizer, device, epoch_idx):
         labels = labels.to(device, non_blocking=True)
 
         # --- INNER MAX: generate adversarial batch against current weights ---
-        # BN in eval mode during the attack freezes the running statistics, so
-        # the unrolled adversarial forward passes do not pollute them. This is
-        # deliberate (not the cause of the old collapse — that was the label
-        # space) and the standard BN-safe choice for fine-tuning a pretrained net.
+        # BN in eval mode during the attack freezes the running statistics so the
+        # unrolled adversarial forward passes do not pollute them.
         model.eval()
         adv_images = pgd.apply(classifier, clean_images, labels)
-        # Cut the autograd graph from the attack — gradients should flow ONLY
-        # through the training-step forward pass below, not the PGD unroll.
+        # Cut the autograd graph from the attack — gradients flow ONLY through the
+        # training-step forward pass below, not the PGD unroll.
         adv_images = adv_images.detach()
 
         # --- CLEAN-ACCURACY DIAGNOSTIC (eval mode, no grad) ---
-        # Measured every batch so a clean-accuracy collapse (the failure mode of
-        # the first run) is visible in the log/pbar from epoch 1 onward.
         with torch.no_grad():
             clean_logits = classifier.logits(clean_images)
-            total_clean_correct += int((clean_logits.argmax(dim=1) == labels).sum().item())
+            batch_clean = int((clean_logits.argmax(dim=1) == labels).sum().item())
+            total_clean_correct += batch_clean
+            win_clean.append((batch_clean, labels.size(0)))
 
         # --- OUTER MIN: one SGD step on the adversarial images ---
+        # train() re-enables BN-stat updates / dropout; freeze_bn then re-pins BN
+        # to eval so only the affine params train and running stats stay frozen.
         model.train()
+        if freeze_bn:
+            set_bn_eval(model)
         optimizer.zero_grad()
         logits = classifier.logits(adv_images)
         loss = F.cross_entropy(logits, labels)
         loss.backward()
+        if grad_clip_norm is not None:
+            torch.nn.utils.clip_grad_norm_(params, grad_clip_norm)
         optimizer.step()
 
         with torch.no_grad():
-            total_adv_correct += int((logits.argmax(dim=1) == labels).sum().item())
+            batch_adv = int((logits.argmax(dim=1) == labels).sum().item())
+            total_adv_correct += batch_adv
+            win_adv.append((batch_adv, labels.size(0)))
 
         total_loss += float(loss.item()) * labels.size(0)
         total_samples += labels.size(0)
         n_batches += 1
+
+        inst_clean = sum(c for c, _ in win_clean) / max(sum(n for _, n in win_clean), 1)
+        inst_adv = sum(c for c, _ in win_adv) / max(sum(n for _, n in win_adv), 1)
         pbar.set_postfix(
             loss=f"{total_loss / total_samples:.3f}",
-            clean_acc=f"{total_clean_correct / total_samples:.3f}",
-            adv_acc=f"{total_adv_correct / total_samples:.3f}",
+            clean=f"{total_clean_correct / total_samples:.3f}",
+            adv=f"{total_adv_correct / total_samples:.3f}",
+            i_clean=f"{inst_clean:.3f}",   # instantaneous (last inst_window batches)
+            i_adv=f"{inst_adv:.3f}",
         )
+
+        if (abort_clean_below is not None and n_batches >= abort_after_batch
+                and inst_clean < abort_clean_below):
+            raise CleanCollapse(
+                f"instantaneous clean acc {inst_clean:.3f} < {abort_clean_below} "
+                f"after {n_batches} batches — aborting to save GPU. Lowering LR is a "
+                f"dead end; revisit the recipe (BN handling / freeze_bn / dual-BN)."
+            )
 
     elapsed = time.perf_counter() - t0
     return {
@@ -176,6 +246,17 @@ def main() -> None:
                         help="Path to a checkpoint to resume from.")
     parser.add_argument("--checkpoint-dir", type=str, default=None)
     parser.add_argument("--log-path", type=str, default=None)
+    parser.add_argument("--freeze-bn", dest="freeze_bn", action="store_true",
+                        help="Freeze BN running stats during the training fwd (collapse fix).")
+    parser.add_argument("--no-freeze-bn", dest="freeze_bn", action="store_false",
+                        help="Let BN running stats update during training (the old behavior).")
+    parser.set_defaults(freeze_bn=None)   # None -> fall back to config['defense']['freeze_bn']
+    parser.add_argument("--grad-clip-norm", type=float, default=None,
+                        help="Max global grad norm; 0 disables (default: config).")
+    parser.add_argument("--abort-clean-below", type=float, default=None,
+                        help="Abort if instantaneous clean acc drops below this after "
+                             "--abort-after-batch batches (saves GPU on a collapse).")
+    parser.add_argument("--abort-after-batch", type=int, default=200)
     args = parser.parse_args()
 
     cfg = load_config()
@@ -197,6 +278,14 @@ def main() -> None:
     checkpoint_dir = _abs(args.checkpoint_dir or d.get("checkpoint_dir", "models/checkpoints"))
     log_path = _abs(args.log_path or "results/defense/training_log.json")
 
+    # Recipe-stability knobs (the clean-collapse fix). freeze_bn is the primary
+    # lever; grad_clip_norm is cheap insurance against early adversarial-gradient
+    # spikes. CLI flags override config; grad_clip_norm of 0/null disables.
+    freeze_bn = args.freeze_bn if args.freeze_bn is not None else bool(d.get("freeze_bn", True))
+    _gc = args.grad_clip_norm if args.grad_clip_norm is not None else d.get("grad_clip_norm", 1.0)
+    grad_clip_norm = None if _gc in (0, 0.0, None) else float(_gc)
+    abort_clean_below = args.abort_clean_below   # None unless explicitly requested
+
     if not train_dir:
         raise SystemExit(
             "No --train-dir given and config['defense']['train_dir'] is empty. "
@@ -212,6 +301,8 @@ def main() -> None:
     print(f"[defense] device={device}  train_dir={train_dir}")
     print(f"[defense] {num_classes} classes x {images_per_class} imgs/class  "
           f"batch={batch_size}  epochs={epochs}  lr={lr}  pgd-{pgd_steps}@eps={pgd_eps:.4f}")
+    print(f"[defense] freeze_bn={freeze_bn}  grad_clip_norm={grad_clip_norm}  "
+          f"abort_clean_below={abort_clean_below}")
 
     # 1. Build classifier — TorchVisionClassifier loads pretrained ResNet-50.
     classifier = build_classifier("resnet50", device=device)
@@ -282,7 +373,24 @@ def main() -> None:
     # 6. Training loop.
     run_started_at = time.time()
     for epoch in range(start_epoch, epochs + 1):
-        stats = train_one_epoch(classifier, loader, pgd, optimizer, device, epoch)
+        try:
+            stats = train_one_epoch(
+                classifier, loader, pgd, optimizer, device, epoch,
+                freeze_bn=freeze_bn, grad_clip_norm=grad_clip_norm,
+                abort_clean_below=abort_clean_below,
+                abort_after_batch=args.abort_after_batch,
+            )
+        except CleanCollapse as exc:
+            print(f"[defense] ABORTED epoch {epoch}: {exc}")
+            log = {
+                "config": d, "seed": seed, "train_dir": train_dir,
+                "epochs_planned": epochs, "device": device,
+                "epochs": log_entries, "run_started_at": run_started_at,
+                "aborted": {"epoch": epoch, "reason": str(exc)},
+            }
+            with open(log_path, "w", encoding="utf-8") as f:
+                json.dump(log, f, indent=2)
+            raise SystemExit(1)
         stats["lr"] = optimizer.param_groups[0]["lr"]
         scheduler.step()
         log_entries.append(stats)

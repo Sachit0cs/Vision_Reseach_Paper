@@ -89,6 +89,15 @@ defense:
                                 # If going higher than 0.003, add warmup + clip_grad_norm_ first.
   momentum: 0.9
   weight_decay: 5.0e-4
+  # --- recipe-stability knobs (clean-collapse fix) ---
+  # freeze_bn: keep BN running_mean/var FROZEN at the pretrained clean stats during
+  # the adversarial training forward. Without this, BN drifts toward the adversarial
+  # distribution while clean acc (and eval) read the corrupted stats -> clean craters
+  # within one epoch at every LR (the single-BN AT pathology). This is the primary fix.
+  freeze_bn: true
+  # grad_clip_norm: clip the global grad norm (cheap insurance vs early adv-grad spikes).
+  # Set to 0 or null to disable.
+  grad_clip_norm: 1.0
   pgd_epsilon: 0.03137254901960784   # 8/255 — same as eval threat model
   pgd_alpha: 0.00784313725490196     # 2/255
   pgd_steps: 5                       # cheaper than eval-time PGD-20
