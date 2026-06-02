@@ -59,21 +59,35 @@ robustbench_model:
   dataset: imagenet
 
 # Phase C — defense model (Madry-style PGD adversarial fine-tuning).
+#
+# FIX (2026-06): train on ALL 1000 ImageNet classes so the training label space
+# matches the 1000-class evaluation benchmark. The earlier run trained on only
+# the first 100 classes but was scored on all 1000 -> clean accuracy was capped
+# near 100/1000 = 10% before any attack (the reported "6% collapse"). That was an
+# eval/label-space bug, NOT an inherent limit.
+#
+# Recommended recipe (results-oriented): adversarially FINE-TUNE the ImageNet-1k
+# -pretrained ResNet-50 (train_defense.py loads pretrained weights) — NOT from
+# scratch. Fine-tuning keeps clean accuracy high (~60-70%) and reaches PGD
+# robustness in the ~25-40% range within a handful of epochs; from-scratch AT on
+# ImageNet needs ~90+ epochs on multi-GPU to match. train_defense.py adds a
+# cosine LR decay and tracks per-epoch CLEAN accuracy so a collapse is caught early.
 defense:
   base_arch: resnet50
-  num_classes: 100              # ImageNet classes to fine-tune on
-  images_per_class: 200         # ~20k training images total
-  epochs: 3
+  num_classes: 1000             # ALL ImageNet classes (matches the 1000-class eval)
+  images_per_class: 300         # ~300k imgs/epoch; raise toward ~1300 to use all
+  epochs: 10                    # fine-tune budget (cosine LR decay over these epochs)
   batch_size: 64
-  lr: 0.001                     # low for fine-tune (vs Madry's 0.1 from-scratch)
+  lr: 0.01                      # SGD peak LR for adversarial fine-tune; cosine-decayed to 0
   momentum: 0.9
   weight_decay: 5.0e-4
   pgd_epsilon: 0.03137254901960784   # 8/255 — same as eval threat model
   pgd_alpha: 0.00784313725490196     # 2/255
   pgd_steps: 5                       # cheaper than eval-time PGD-20
-  num_workers: 2
+  num_workers: 4
   checkpoint_dir: models/checkpoints
-  # Default training-data location — override with --train-dir on the CLI.
-  # On Kaggle, add the `ambityga/imagenet100` dataset (or similar) and point
-  # this at the WNID-folder root.
-  train_dir: /kaggle/input/imagenet100/train
+  # Training-data location — override with --train-dir on the CLI.
+  # Needs the FULL ImageNet-1k train tree (1000 WNID folders). On Kaggle, add the
+  # "imagenet-object-localization-challenge" dataset; its train tree is at:
+  #   /kaggle/input/imagenet-object-localization-challenge/ILSVRC/Data/CLS-LOC/train
+  train_dir: /kaggle/input/imagenet-object-localization-challenge/ILSVRC/Data/CLS-LOC/train

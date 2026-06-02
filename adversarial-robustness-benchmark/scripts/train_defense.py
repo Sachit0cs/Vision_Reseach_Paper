@@ -5,9 +5,21 @@ max-step of the min-max adversarial-training objective:
 
     min_theta  E_(x,y) [ max_{||delta||_inf <= eps} L(f_theta(x+delta), y) ]
 
+Recipe (results-oriented — see config.yaml ``defense`` block):
+  * FINE-TUNE the ImageNet-1k-pretrained ResNet-50 (loaded below), NOT from
+    scratch. Fine-tuning keeps clean accuracy high and converges in a handful
+    of epochs; from-scratch AT on ImageNet needs ~90+ epochs.
+  * Train on ALL ``num_classes`` (default 1000) classes so the training label
+    space matches the 1000-class evaluation benchmark. Training on only 100
+    classes while scoring on 1000 was the bug that produced the 6% clean
+    "collapse" of the first run.
+  * Cosine LR decay over the run; per-epoch CLEAN accuracy is tracked alongside
+    adversarial accuracy so a clean-accuracy collapse is caught immediately.
+
 For each batch:
-  1. INNER MAX — eval-mode PGD-5 against the CURRENT model state, producing
-     adversarial copies of every training image.
+  1. INNER MAX — PGD-5 against the CURRENT model state with BN in eval mode
+     (running stats frozen during the attack — deliberate, avoids polluting BN
+     statistics with the unrolled adversarial forward passes).
   2. OUTER MIN — train-mode CE loss on the adversarial images only (plain
      Madry recipe; no clean-mix, no TRADES KL-regularizer).
 
@@ -18,15 +30,15 @@ freezes them by default for inference) and refrozen on exit so the saved
 checkpoint loads cleanly back through ``DefenseModel``.
 
 Outputs:
-  * models/checkpoints/defense_epoch_{1,2,3}.pt
+  * models/checkpoints/defense_epoch_{1..N}.pt
   * models/checkpoints/defense_final.pt   (== last epoch, easier to load)
-  * results/defense/training_log.json     (per-epoch loss + adv-acc + timing)
+  * results/defense/training_log.json     (per-epoch loss + clean/adv acc + timing)
 
 Usage:
     python scripts/train_defense.py
-    python scripts/train_defense.py --train-dir /kaggle/input/imagenet100/train
+    python scripts/train_defense.py --train-dir /path/to/imagenet/train   # 1000 WNID folders
     python scripts/train_defense.py --resume models/checkpoints/defense_epoch_1.pt
-    python scripts/train_defense.py --epochs 2 --batch-size 32   # OOM fallback
+    python scripts/train_defense.py --epochs 5 --batch-size 32   # OOM fallback
 """
 
 from __future__ import annotations
@@ -71,10 +83,11 @@ def _abs(path: str) -> str:
 
 
 def train_one_epoch(classifier, loader, pgd, optimizer, device, epoch_idx):
-    """One full pass over the loader; return (mean_loss, adv_top1, num_batches)."""
+    """One full pass over the loader; returns per-epoch loss + clean/adv top-1."""
     model = classifier.model
     total_loss = 0.0
-    total_correct = 0
+    total_adv_correct = 0
+    total_clean_correct = 0
     total_samples = 0
     n_batches = 0
     t0 = time.perf_counter()
@@ -85,13 +98,22 @@ def train_one_epoch(classifier, loader, pgd, optimizer, device, epoch_idx):
         labels = labels.to(device, non_blocking=True)
 
         # --- INNER MAX: generate adversarial batch against current weights ---
+        # BN in eval mode during the attack freezes the running statistics, so
+        # the unrolled adversarial forward passes do not pollute them. This is
+        # deliberate (not the cause of the old collapse — that was the label
+        # space) and the standard BN-safe choice for fine-tuning a pretrained net.
         model.eval()
         adv_images = pgd.apply(classifier, clean_images, labels)
-        # Cut the autograd graph from the attack — gradients should flow
-        # ONLY through the training-step forward pass below, not back through
-        # the PGD unroll (PGD unroll uses model params with frozen-effect
-        # in eval mode, but the safe thing is an explicit detach).
+        # Cut the autograd graph from the attack — gradients should flow ONLY
+        # through the training-step forward pass below, not the PGD unroll.
         adv_images = adv_images.detach()
+
+        # --- CLEAN-ACCURACY DIAGNOSTIC (eval mode, no grad) ---
+        # Measured every batch so a clean-accuracy collapse (the failure mode of
+        # the first run) is visible in the log/pbar from epoch 1 onward.
+        with torch.no_grad():
+            clean_logits = classifier.logits(clean_images)
+            total_clean_correct += int((clean_logits.argmax(dim=1) == labels).sum().item())
 
         # --- OUTER MIN: one SGD step on the adversarial images ---
         model.train()
@@ -102,23 +124,23 @@ def train_one_epoch(classifier, loader, pgd, optimizer, device, epoch_idx):
         optimizer.step()
 
         with torch.no_grad():
-            preds = logits.argmax(dim=1)
-            batch_correct = int((preds == labels).sum().item())
+            total_adv_correct += int((logits.argmax(dim=1) == labels).sum().item())
 
         total_loss += float(loss.item()) * labels.size(0)
-        total_correct += batch_correct
         total_samples += labels.size(0)
         n_batches += 1
         pbar.set_postfix(
             loss=f"{total_loss / total_samples:.3f}",
-            adv_acc=f"{total_correct / total_samples:.3f}",
+            clean_acc=f"{total_clean_correct / total_samples:.3f}",
+            adv_acc=f"{total_adv_correct / total_samples:.3f}",
         )
 
     elapsed = time.perf_counter() - t0
     return {
         "epoch": epoch_idx,
         "mean_adv_loss": total_loss / max(total_samples, 1),
-        "mean_adv_acc": total_correct / max(total_samples, 1),
+        "mean_clean_acc": total_clean_correct / max(total_samples, 1),
+        "mean_adv_acc": total_adv_correct / max(total_samples, 1),
         "num_batches": n_batches,
         "num_samples": total_samples,
         "wall_clock_s": elapsed,
@@ -223,11 +245,15 @@ def main() -> None:
     # reserved for evaluation.
     pgd = PGD(epsilon=pgd_eps, step_size=pgd_alpha, num_steps=pgd_steps, random_start=True)
 
-    # 4. Optimizer (SGD with momentum, standard Madry hyperparameters).
+    # 4. Optimizer (SGD with momentum, standard Madry hyperparameters) +
+    #    cosine LR decay over the planned epochs. Cosine decay is the standard
+    #    schedule for adversarial fine-tuning and helps the model settle into a
+    #    robust minimum without destroying the pretrained clean features early.
     optimizer = torch.optim.SGD(
         [p for p in model.parameters() if p.requires_grad],
         lr=lr, momentum=momentum, weight_decay=weight_decay,
     )
+    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=epochs)
 
     # 5. Optional resume.
     start_epoch = 1
@@ -243,6 +269,9 @@ def main() -> None:
         if "optimizer" in state:
             optimizer.load_state_dict(state["optimizer"])
         start_epoch = int(state.get("epoch", 0)) + 1
+        # Advance the cosine schedule to where the resumed run left off.
+        for _ in range(start_epoch - 1):
+            scheduler.step()
         print(f"[defense] resumed from {args.resume} at epoch {start_epoch}")
         # Preserve prior log entries if they exist.
         if os.path.exists(log_path):
@@ -254,10 +283,14 @@ def main() -> None:
     run_started_at = time.time()
     for epoch in range(start_epoch, epochs + 1):
         stats = train_one_epoch(classifier, loader, pgd, optimizer, device, epoch)
+        stats["lr"] = optimizer.param_groups[0]["lr"]
+        scheduler.step()
         log_entries.append(stats)
         print(f"[defense] epoch {epoch}/{epochs}: "
               f"loss={stats['mean_adv_loss']:.3f}  "
+              f"clean_acc={stats['mean_clean_acc']:.3f}  "
               f"adv_acc={stats['mean_adv_acc']:.3f}  "
+              f"lr={stats['lr']:.4f}  "
               f"time={stats['wall_clock_s']/60:.1f} min")
 
         ckpt_path = os.path.join(checkpoint_dir, f"defense_epoch_{epoch}.pt")
