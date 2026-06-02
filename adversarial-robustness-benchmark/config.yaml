@@ -78,7 +78,15 @@ defense:
   images_per_class: 300         # ~300k imgs/epoch; raise toward ~1300 to use all
   epochs: 10                    # fine-tune budget (cosine LR decay over these epochs)
   batch_size: 64
-  lr: 0.01                      # SGD peak LR for adversarial fine-tune; cosine-decayed to 0
+  lr: 0.003                     # SGD peak LR for adversarial fine-tune; cosine-decayed to 0.
+                                # NOTE: lr=0.01 diverged — full-net AT fine-tune of pretrained
+                                # ResNet-50 destroyed clean features in ~150 steps (clean acc
+                                # 0.79->chance, loss pinned at ln(1000)). 0.001 verified stable
+                                # (clean held 0.81->0.71). 0.003 chosen as a higher peak for
+                                # faster robustness build-up — stability INFERRED, not verified,
+                                # so watch clean_acc over the first ~150 batches of epoch 1; if it
+                                # free-falls toward chance, fall back to 0.001 (--lr 0.001).
+                                # If going higher than 0.003, add warmup + clip_grad_norm_ first.
   momentum: 0.9
   weight_decay: 5.0e-4
   pgd_epsilon: 0.03137254901960784   # 8/255 — same as eval threat model
@@ -90,4 +98,8 @@ defense:
   # Needs the FULL ImageNet-1k train tree (1000 WNID folders). On Kaggle, add the
   # "imagenet-object-localization-challenge" dataset; its train tree is at:
   #   /kaggle/input/imagenet-object-localization-challenge/ILSVRC/Data/CLS-LOC/train
+  # NOTE: when added via the Competitions tab the path gains a "competitions/" segment:
+  #   /kaggle/input/competitions/imagenet-object-localization-challenge/ILSVRC/Data/CLS-LOC/train
+  # The mount path is image-specific — pass the actual one with --train-dir rather than
+  # relying on this default.
   train_dir: /kaggle/input/imagenet-object-localization-challenge/ILSVRC/Data/CLS-LOC/train
