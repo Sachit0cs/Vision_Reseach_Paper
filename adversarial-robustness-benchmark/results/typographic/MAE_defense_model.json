@@ -1,0 +1,36 @@
+{
+  "model": "MAE_defense_model",
+  "attack": "typographic",
+  "seed": 42,
+  "host_env": {
+    "gpu": "Tesla T4",
+    "cuda_available": true,
+    "torch": "2.10.0+cu128",
+    "torchvision": "0.25.0+cu128",
+    "transformers": "5.0.0",
+    "pillow": "11.3.0"
+  },
+  "dataset_size": 1000,
+  "clean_correct": 742,
+  "robust_correct": 724,
+  "tasr_correct": 0,
+  "clean_accuracy": 0.742,
+  "robust_accuracy": 0.724,
+  "targeted_attack_success_rate": 0.0,
+  "fooling_rate": 0.057951482479784364,
+  "n_originally_correct": 742,
+  "n_flipped_from_correct": 43,
+  "typographic_config": {
+    "font_size_frac": 0.12,
+    "position": "top",
+    "padding_frac": 0.04,
+    "opacity": 1.0,
+    "jpeg_quality": 90,
+    "text_form": "lowercase_first_synonym"
+  },
+  "wall_clock_s": {
+    "preprocess": 5.882889993999925,
+    "clean_eval": 76.81755620499962,
+    "typographic_eval": 75.635331855
+  }
+}

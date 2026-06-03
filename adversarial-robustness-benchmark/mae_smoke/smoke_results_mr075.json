@@ -1,0 +1,26 @@
+{
+  "config": {
+    "n": 200,
+    "k": 8,
+    "mask_ratio": 0.75,
+    "pgd_steps": 20,
+    "seed": 42,
+    "device": "cuda",
+    "mae_id": "facebook/vit-mae-base",
+    "norm_pix_loss": false,
+    "epsilon": 0.03137254901960784,
+    "classifier": "resnet50",
+    "tag": "mr075"
+  },
+  "clean_accuracy": {
+    "bare": 0.7549999952316284,
+    "purified_k1": 0.4050000011920929,
+    "purified_kK": 0.6299999952316284
+  },
+  "robustness_indicator_NON_adaptive": {
+    "pgd_bare": 0.0,
+    "pgd_then_purify_kK": 0.27000001072883606,
+    "_warning": "NON-adaptive. Attack was crafted on the bare classifier, not through the purifier. Real verdict needs BPDA+EOT or the full gradient benchmark (Square/AutoAttack) on the wrapped pipeline."
+  },
+  "grid_png": "figures/reconstruction_grid_mr075.png"
+}

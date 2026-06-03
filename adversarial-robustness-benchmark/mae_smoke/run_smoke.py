@@ -71,6 +71,17 @@ def _logits_in_chunks(classifier, x: torch.Tensor, chunk: int = 16) -> torch.Ten
     return torch.cat(outs, dim=0)
 
 
+def _pgd_in_chunks(pgd_attack, classifier, imgs: torch.Tensor,
+                   labels: torch.Tensor, chunk: int = 16) -> torch.Tensor:
+    """Run PGD sub-batch by sub-batch to avoid OOM on large datasets."""
+    adv_chunks = []
+    for i in range(0, imgs.size(0), chunk):
+        adv_chunks.append(
+            pgd_attack.apply(classifier, imgs[i : i + chunk], labels[i : i + chunk]).cpu()
+        )
+    return torch.cat(adv_chunks, dim=0)
+
+
 def _save_grid(orig, masked, recon, purified, out_dir, num, tag):
     import matplotlib
 
@@ -113,6 +124,8 @@ def main() -> None:
                     help="suffix for output files so multiple runs do not overwrite")
     ap.add_argument("--chunk", type=int, default=32,
                     help="MAE sub-batch size (lower if you OOM on the GPU)")
+    ap.add_argument("--pgd-chunk", type=int, default=16,
+                    help="PGD sub-batch size (lower if you OOM during the attack)")
     args = ap.parse_args()
 
     tag = f"_{args.tag}" if args.tag else ""
@@ -129,7 +142,16 @@ def main() -> None:
     labels_cpu = labels.cpu()
     print(f"[smoke] loaded {imgs.size(0)} images @ {tuple(imgs.shape[-2:])}")
 
-    # 2. MAE purifier (downloads ~440 MB on first run).
+    # 2. NON-ADAPTIVE robustness indicator — run BEFORE loading MAE so only
+    #    ResNet-50 + gradients occupy GPU RAM (avoids OOM on 16 GB cards).
+    #    Also chunk the PGD attack itself to keep per-batch memory bounded.
+    print("[smoke] running PGD (bare classifier only, MAE not yet loaded) ...")
+    clean_bare = _accuracy(_logits_in_chunks(clf, imgs), labels_cpu)
+    pgd = PGD(epsilon=_EPS, step_size=_STEP, num_steps=args.pgd_steps, random_start=True)
+    adv_cpu = _pgd_in_chunks(pgd, clf, imgs, labels, chunk=args.pgd_chunk)
+    adv_bare = _accuracy(_logits_in_chunks(clf, adv_cpu.to(device)), labels_cpu)
+
+    # 3. MAE purifier (downloads ~440 MB on first run).
     t0 = time.perf_counter()
     try:
         purifier = MAEPurifier(model_id=args.mae_id, device=device)
@@ -144,16 +166,12 @@ def main() -> None:
 
     pure = lambda x, k: purifier.purify(x, n_masks=k, mask_ratio=args.mask_ratio, chunk=args.chunk)
 
-    # 3. Clean accuracy: bare vs purified(K=1) vs purified(K). => cost of masking.
-    clean_bare = _accuracy(_logits_in_chunks(clf, imgs), labels_cpu)
+    # 4. Clean accuracy: bare vs purified(K=1) vs purified(K). => cost of masking.
     clean_pur1 = _accuracy(_logits_in_chunks(clf, pure(imgs, 1).to(device)), labels_cpu)
     clean_purK = _accuracy(_logits_in_chunks(clf, pure(imgs, args.k).to(device)), labels_cpu)
 
-    # 4. NON-ADAPTIVE robustness indicator (see module docstring caveat).
-    pgd = PGD(epsilon=_EPS, step_size=_STEP, num_steps=args.pgd_steps, random_start=True)
-    adv = pgd.apply(clf, imgs, labels)
-    adv_bare = _accuracy(_logits_in_chunks(clf, adv), labels_cpu)
-    adv_purK = _accuracy(_logits_in_chunks(clf, pure(adv, args.k).to(device)), labels_cpu)
+    # 4b. Purify the adversarial examples that were generated above.
+    adv_purK = _accuracy(_logits_in_chunks(clf, pure(adv_cpu, args.k).to(device)), labels_cpu)
 
     # 5. Visual sanity grid.
     masked_v, recon_v, purified_v = purifier.visualize(imgs[: args.num_grids], mask_ratio=args.mask_ratio)

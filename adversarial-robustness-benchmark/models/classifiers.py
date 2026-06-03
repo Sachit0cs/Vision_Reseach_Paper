@@ -169,6 +169,7 @@ def _imagenet_categories() -> list[str]:
 
 
 _DEFENSE_KEY = "defense_resnet50"
+_MAE_DEFENSE_KEY = "MAE_defense_model"
 
 
 def build_classifier(name: str, device: str = "cpu") -> BaseClassifier:
@@ -183,5 +184,11 @@ def build_classifier(name: str, device: str = "cpu") -> BaseClassifier:
         from .defense_module import DefenseModel
 
         return DefenseModel(device=device)
-    known = sorted(_TV_SPECS) + [_CLIP_KEY, _DEFENSE_KEY]
+    if name == _MAE_DEFENSE_KEY:
+        # Lazy import: only pulls in transformers / downloads the MAE when this
+        # defense is actually requested.
+        from .mae_defense import MAEDefenseModel
+
+        return MAEDefenseModel(device=device)
+    known = sorted(_TV_SPECS) + [_CLIP_KEY, _DEFENSE_KEY, _MAE_DEFENSE_KEY]
     raise ValueError(f"Unknown model key '{name}'. Known keys: {known}")
