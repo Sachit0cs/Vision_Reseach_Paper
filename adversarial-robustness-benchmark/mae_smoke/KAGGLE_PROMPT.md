@@ -21,8 +21,10 @@ smoke test** at a proper sample size and report the numbers. Read the rules firs
    its Madry-adversarial-training state with zero side effects.
 3. **Do NOT add new attacks or new dependencies.** Everything needed is already
    present (`transformers` is a repo dependency).
-4. If `mae_smoke/mae_purifier.py` / `run_smoke.py` are missing, recreate them in
-   that folder verbatim from the **Appendix** below — nowhere else.
+4. The `mae_smoke/` files are **committed on the `defense-mae` branch**, so they
+   already exist after checkout — you should not need to create anything. ONLY if a
+   file is somehow missing, recreate it in that folder verbatim from the
+   **Appendix** below — nowhere else.
 
 ## PROJECT CONTEXT (so you understand what you're running)
 - A benchmark of **7 ImageNet classifiers** (ResNet-50, VGG-16, ConvNeXt-Tiny,
@@ -45,13 +47,15 @@ smoke test** at a proper sample size and report the numbers. Read the rules firs
   classifies and is the thing measured.
 
 ## SETUP
+All `mae_smoke/` code lives on the **`defense-mae` branch** (it is NOT on `main`).
+After checking out that branch the folder is fully present — do not recreate files.
 ```bash
-# (if cloning) get the experimental branch that holds mae_smoke/
 git clone <repo-url> && cd adversarial-robustness-benchmark
-git checkout defense-mae
+git fetch origin && git checkout defense-mae       # the branch that holds mae_smoke/
+ls mae_smoke                                        # expect mae_purifier.py, run_smoke.py, README.md, ...
 
 python -c "import torch; print('cuda', torch.cuda.is_available())"   # expect True
-pip -q install transformers   # already a repo dep; installs if the image lacks it
+pip -q install transformers    # already a repo dep; installs only if the image lacks it
 ```
 
 ## RUN (the bigger run + a 2-point mask-ratio sweep)

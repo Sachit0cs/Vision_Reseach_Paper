@@ -61,6 +61,12 @@ not "it works." The adaptive evaluation is the next step in the project plan.
 
 ## To discard
 
+This work lives entirely on the **`defense-mae` branch**; `main` (the Madry-AT
+state) never had it.
+
 ```bash
-rm -rf mae_smoke/        # PowerShell: Remove-Item -Recurse -Force mae_smoke
+git checkout main                         # back to Madry instantly — folder isn't here
+# abandon the experiment for good:
+git branch -D defense-mae
+git push origin --delete defense-mae
 ```
