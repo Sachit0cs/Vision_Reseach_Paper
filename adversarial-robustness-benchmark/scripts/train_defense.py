@@ -407,6 +407,13 @@ def main() -> None:
         if "optimizer" in state:
             optimizer.load_state_dict(state["optimizer"])
         start_epoch = int(state.get("epoch", 0)) + 1
+        # Reset LR to the base value before re-stepping the schedule. The loaded
+        # optimizer carries the cosine LR from the checkpoint epoch (which is ~0 if
+        # that was the FINAL epoch of its schedule), and CosineAnnealingLR.step()
+        # advances RECURRENTLY from the current LR — so without this reset a saved
+        # LR of 0 pins every resumed epoch at 0 and the model never updates (frozen).
+        for group in optimizer.param_groups:
+            group["lr"] = lr
         # Advance the cosine schedule to where the resumed run left off.
         for _ in range(start_epoch - 1):
             scheduler.step()
