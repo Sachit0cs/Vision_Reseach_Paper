@@ -113,6 +113,14 @@ def set_bn_eval(model) -> None:
             m.eval()
 
 
+def eps_for_epoch(epoch, eps_max, eps_start, warmup_epochs):
+    """Linear eps warmup, 1-indexed epoch. Ramps eps_start -> eps_max over the
+    first `warmup_epochs` epochs, then holds eps_max. 0/1 disables warmup."""
+    if not warmup_epochs or warmup_epochs <= 1 or epoch >= warmup_epochs:
+        return eps_max
+    return eps_start + (eps_max - eps_start) * (epoch - 1) / (warmup_epochs - 1)
+
+
 class CleanCollapse(RuntimeError):
     """Raised to abort early when instantaneous clean accuracy craters."""
 
@@ -281,6 +289,11 @@ def main() -> None:
                         help="Abort if instantaneous clean acc drops below this after "
                              "--abort-after-batch batches (saves GPU on a collapse).")
     parser.add_argument("--abort-after-batch", type=int, default=200)
+    parser.add_argument("--eps-warmup-epochs", type=int, default=None,
+                        help="Ramp training eps from --eps-start to full over first N epochs "
+                             "(0/1 = off; default: config).")
+    parser.add_argument("--eps-start", type=float, default=None,
+                        help="Starting (weak) eps for the warmup ramp (default: config, 2/255).")
     args = parser.parse_args()
 
     cfg = load_config()
@@ -298,6 +311,10 @@ def main() -> None:
     pgd_eps = float(d.get("pgd_epsilon", 8 / 255))
     pgd_alpha = float(d.get("pgd_alpha", 2 / 255))
     pgd_steps = args.pgd_steps or int(d.get("pgd_steps", 5))
+    eps_warmup_epochs = (args.eps_warmup_epochs if args.eps_warmup_epochs is not None
+                         else int(d.get("eps_warmup_epochs", 0)))
+    pgd_eps_start = (args.eps_start if args.eps_start is not None
+                     else float(d.get("pgd_eps_start", pgd_eps)))
     num_workers = args.num_workers if args.num_workers is not None else int(d.get("num_workers", 2))
     checkpoint_dir = _abs(args.checkpoint_dir or d.get("checkpoint_dir", "models/checkpoints"))
     log_path = _abs(args.log_path or "results/defense/training_log.json")
@@ -330,6 +347,9 @@ def main() -> None:
           f"batch={batch_size}  epochs={epochs}  lr={lr}  pgd-{pgd_steps}@eps={pgd_eps:.4f}")
     print(f"[defense] clean_weight={clean_weight}  freeze_bn={freeze_bn}  "
           f"grad_clip_norm={grad_clip_norm}  abort_clean_below={abort_clean_below}")
+    print(f"[defense] eps_warmup_epochs={eps_warmup_epochs}  "
+          f"eps_start={pgd_eps_start:.5f} ({pgd_eps_start*255:.2f}/255) -> "
+          f"eps_max={pgd_eps:.5f} ({pgd_eps*255:.2f}/255)")
 
     # 1. Build classifier — TorchVisionClassifier loads pretrained ResNet-50.
     classifier = build_classifier("resnet50", device=device)
@@ -400,6 +420,10 @@ def main() -> None:
     # 6. Training loop.
     run_started_at = time.time()
     for epoch in range(start_epoch, epochs + 1):
+        eps_e = eps_for_epoch(epoch, pgd_eps, pgd_eps_start, eps_warmup_epochs)
+        pgd.epsilon = eps_e
+        pgd.step_size = eps_e * (pgd_alpha / pgd_eps) if pgd_eps > 0 else pgd_alpha
+        print(f"[defense] epoch {epoch}: train eps = {eps_e:.5f} ({eps_e*255:.2f}/255)")
         try:
             stats = train_one_epoch(
                 classifier, loader, pgd, optimizer, device, epoch,
@@ -420,6 +444,7 @@ def main() -> None:
                 json.dump(log, f, indent=2)
             raise SystemExit(1)
         stats["lr"] = optimizer.param_groups[0]["lr"]
+        stats["train_eps"] = eps_e
         scheduler.step()
         log_entries.append(stats)
         print(f"[defense] epoch {epoch}/{epochs}: "
