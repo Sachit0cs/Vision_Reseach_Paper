@@ -20,12 +20,15 @@ For each batch:
   1. INNER MAX — PGD-5 against the CURRENT model state with BN in eval mode
      (running stats frozen during the attack — deliberate, avoids polluting BN
      statistics with the unrolled adversarial forward passes).
-  2. OUTER MIN — CE loss on the adversarial images only (plain Madry recipe; no
-     clean-mix, no TRADES KL-regularizer). With ``freeze_bn`` (default) the
-     forward keeps BN running stats pinned at the pretrained clean values so they
-     are never dragged toward the adversarial distribution — the fix for the
-     clean-accuracy collapse that lowering the LR could not cure. Optional global
-     gradient clipping (``grad_clip_norm``) absorbs early adversarial-grad spikes.
+  2. OUTER MIN — CLEAN+ADVERSARIAL mixed CE loss:
+       loss = clean_weight * CE(clean) + (1 - clean_weight) * CE(adv)
+     Pure-adversarial loss (clean_weight=0) collapses the pretrained net to a
+     uniform predictor: its PGD adversarials start at loss ABOVE ln(num_classes),
+     so the easiest way to cut loss is to output uniform (loss -> ln(num_classes))
+     and the model craters on clean AND adv. The clean term is fittable (loss can
+     fall well below that), which removes the attractor and anchors clean accuracy
+     — the actual collapse fix. (Freezing BN was tried and made it WORSE; default
+     ``freeze_bn`` is now False.) Optional ``grad_clip_norm`` caps gradient spikes.
 
 The classifier wrapper from ``models/classifiers.py`` is reused as-is so the
 training loop sees the same preprocessing + normalization the benchmark uses
@@ -97,14 +100,13 @@ def set_bn_eval(model) -> None:
     The affine params (weight/bias) still receive gradients and train normally —
     ONLY the running statistics are frozen.
 
-    Why this is the fix: the model is fine-tuned on ADVERSARIAL images. In the
-    default ``model.train()`` mode, BN drags running_mean/var toward the
-    adversarial distribution, while clean accuracy (and the eval-time benchmark)
-    is read in ``model.eval()`` using those corrupted stats. That single-BN
-    adversarial-training pathology craters clean accuracy within one epoch at
-    *every* learning rate (lowering the LR only delays it). Pinning BN at the
-    pretrained clean statistics keeps train- and eval-time normalization
-    consistent and stops the feedback loop.
+    History: this was hypothesised as the clean-collapse fix (the idea being that
+    train-mode BN drags running_mean/var toward the adversarial distribution).
+    An A/B test DISPROVED it — freezing BN made the collapse FASTER, because with
+    BN pinned to clean stats the un-renormalised adversarial activations produce a
+    higher starting loss (~9.85 vs ~7.19), which makes the uniform-predictor basin
+    even more attractive. The real cause was the loss objective, not BN — see the
+    clean+adv mix in ``train_one_epoch``. Kept as an opt-in toggle (default off).
     """
     for m in model.modules():
         if isinstance(m, torch.nn.modules.batchnorm._BatchNorm):
@@ -116,13 +118,18 @@ class CleanCollapse(RuntimeError):
 
 
 def train_one_epoch(classifier, loader, pgd, optimizer, device, epoch_idx,
-                    freeze_bn=True, grad_clip_norm=None,
+                    clean_weight=0.5, freeze_bn=False, grad_clip_norm=None,
                     abort_clean_below=None, abort_after_batch=200,
                     inst_window=20):
     """One full pass over the loader; returns per-epoch loss + clean/adv top-1.
 
-    freeze_bn          keep BN running stats frozen during the training forward
-                       (see ``set_bn_eval`` — the primary fix for the collapse).
+    clean_weight       weight on the CLEAN cross-entropy term in the clean+adv
+                       mixed loss (0 = pure-adversarial Madry). The clean term is
+                       fittable, so it removes the uniform-predictor attractor that
+                       pure-adversarial loss collapses into — the actual collapse fix.
+    freeze_bn          pin BN running stats during the training forward. Tried as a
+                       collapse fix; it made the collapse WORSE (default now False),
+                       kept only as a toggle.
     grad_clip_norm     max global grad norm (None disables clipping).
     abort_clean_below  if set, raise ``CleanCollapse`` once the windowed
                        *instantaneous* clean acc falls below this AFTER
@@ -164,22 +171,35 @@ def train_one_epoch(classifier, loader, pgd, optimizer, device, epoch_idx,
             total_clean_correct += batch_clean
             win_clean.append((batch_clean, labels.size(0)))
 
-        # --- OUTER MIN: one SGD step on the adversarial images ---
-        # train() re-enables BN-stat updates / dropout; freeze_bn then re-pins BN
-        # to eval so only the affine params train and running stats stay frozen.
+        # --- OUTER MIN: clean+adversarial mixed-loss SGD step ---
         model.train()
         if freeze_bn:
             set_bn_eval(model)
         optimizer.zero_grad()
-        logits = classifier.logits(adv_images)
-        loss = F.cross_entropy(logits, labels)
+
+        logits_adv = classifier.logits(adv_images)
+        loss_adv = F.cross_entropy(logits_adv, labels)
+
+        # CLEAN+ADV MIX (the collapse fix): a clean CE term is *fittable* — its loss
+        # can fall well below ln(num_classes), whereas the pretrained model's PGD
+        # adversarials start ABOVE it, so a pure-adversarial loss is minimized by the
+        # trivial uniform predictor (loss -> ln(num_classes)) and the net collapses to
+        # a constant. The clean term keeps a learnable signal every step and anchors
+        # clean accuracy. clean_weight=0 recovers the old pure-Madry objective.
+        if clean_weight > 0.0:
+            logits_clean = classifier.logits(clean_images)
+            loss = clean_weight * F.cross_entropy(logits_clean, labels) \
+                + (1.0 - clean_weight) * loss_adv
+        else:
+            loss = loss_adv
+
         loss.backward()
         if grad_clip_norm is not None:
             torch.nn.utils.clip_grad_norm_(params, grad_clip_norm)
         optimizer.step()
 
         with torch.no_grad():
-            batch_adv = int((logits.argmax(dim=1) == labels).sum().item())
+            batch_adv = int((logits_adv.argmax(dim=1) == labels).sum().item())
             total_adv_correct += batch_adv
             win_adv.append((batch_adv, labels.size(0)))
 
@@ -201,8 +221,9 @@ def train_one_epoch(classifier, loader, pgd, optimizer, device, epoch_idx,
                 and inst_clean < abort_clean_below):
             raise CleanCollapse(
                 f"instantaneous clean acc {inst_clean:.3f} < {abort_clean_below} "
-                f"after {n_batches} batches — aborting to save GPU. Lowering LR is a "
-                f"dead end; revisit the recipe (BN handling / freeze_bn / dual-BN)."
+                f"after {n_batches} batches — aborting to save GPU. Confirmed dead ends: "
+                f"lowering LR, freezing BN. If this fires with clean_weight>0, raise it "
+                f"(e.g. 0.7) or add an eps/PGD warmup."
             )
 
     elapsed = time.perf_counter() - t0
@@ -246,10 +267,13 @@ def main() -> None:
                         help="Path to a checkpoint to resume from.")
     parser.add_argument("--checkpoint-dir", type=str, default=None)
     parser.add_argument("--log-path", type=str, default=None)
+    parser.add_argument("--clean-weight", type=float, default=None,
+                        help="Weight on the clean CE term in the clean+adv mixed loss "
+                             "(0 = pure-adversarial Madry; default: config, 0.5).")
     parser.add_argument("--freeze-bn", dest="freeze_bn", action="store_true",
-                        help="Freeze BN running stats during the training fwd (collapse fix).")
+                        help="Freeze BN running stats during the training fwd (tried; made collapse worse).")
     parser.add_argument("--no-freeze-bn", dest="freeze_bn", action="store_false",
-                        help="Let BN running stats update during training (the old behavior).")
+                        help="Let BN running stats update during training (standard, default).")
     parser.set_defaults(freeze_bn=None)   # None -> fall back to config['defense']['freeze_bn']
     parser.add_argument("--grad-clip-norm", type=float, default=None,
                         help="Max global grad norm; 0 disables (default: config).")
@@ -278,10 +302,13 @@ def main() -> None:
     checkpoint_dir = _abs(args.checkpoint_dir or d.get("checkpoint_dir", "models/checkpoints"))
     log_path = _abs(args.log_path or "results/defense/training_log.json")
 
-    # Recipe-stability knobs (the clean-collapse fix). freeze_bn is the primary
-    # lever; grad_clip_norm is cheap insurance against early adversarial-gradient
-    # spikes. CLI flags override config; grad_clip_norm of 0/null disables.
-    freeze_bn = args.freeze_bn if args.freeze_bn is not None else bool(d.get("freeze_bn", True))
+    # Recipe-stability knobs. clean_weight is the COLLAPSE FIX: the clean+adv mixed
+    # loss removes the uniform-predictor attractor that pure-adversarial loss falls
+    # into. grad_clip_norm is cheap insurance against gradient spikes. freeze_bn was
+    # tried and made the collapse worse (default False now). CLI overrides config;
+    # grad_clip_norm of 0/null disables clipping; clean_weight=0 = pure-Madry.
+    clean_weight = args.clean_weight if args.clean_weight is not None else float(d.get("clean_weight", 0.5))
+    freeze_bn = args.freeze_bn if args.freeze_bn is not None else bool(d.get("freeze_bn", False))
     _gc = args.grad_clip_norm if args.grad_clip_norm is not None else d.get("grad_clip_norm", 1.0)
     grad_clip_norm = None if _gc in (0, 0.0, None) else float(_gc)
     abort_clean_below = args.abort_clean_below   # None unless explicitly requested
@@ -301,8 +328,8 @@ def main() -> None:
     print(f"[defense] device={device}  train_dir={train_dir}")
     print(f"[defense] {num_classes} classes x {images_per_class} imgs/class  "
           f"batch={batch_size}  epochs={epochs}  lr={lr}  pgd-{pgd_steps}@eps={pgd_eps:.4f}")
-    print(f"[defense] freeze_bn={freeze_bn}  grad_clip_norm={grad_clip_norm}  "
-          f"abort_clean_below={abort_clean_below}")
+    print(f"[defense] clean_weight={clean_weight}  freeze_bn={freeze_bn}  "
+          f"grad_clip_norm={grad_clip_norm}  abort_clean_below={abort_clean_below}")
 
     # 1. Build classifier — TorchVisionClassifier loads pretrained ResNet-50.
     classifier = build_classifier("resnet50", device=device)
@@ -376,7 +403,8 @@ def main() -> None:
         try:
             stats = train_one_epoch(
                 classifier, loader, pgd, optimizer, device, epoch,
-                freeze_bn=freeze_bn, grad_clip_norm=grad_clip_norm,
+                clean_weight=clean_weight, freeze_bn=freeze_bn,
+                grad_clip_norm=grad_clip_norm,
                 abort_clean_below=abort_clean_below,
                 abort_after_batch=args.abort_after_batch,
             )

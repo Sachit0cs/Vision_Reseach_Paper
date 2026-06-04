@@ -90,12 +90,16 @@ defense:
   momentum: 0.9
   weight_decay: 5.0e-4
   # --- recipe-stability knobs (clean-collapse fix) ---
-  # freeze_bn: keep BN running_mean/var FROZEN at the pretrained clean stats during
-  # the adversarial training forward. Without this, BN drifts toward the adversarial
-  # distribution while clean acc (and eval) read the corrupted stats -> clean craters
-  # within one epoch at every LR (the single-BN AT pathology). This is the primary fix.
-  freeze_bn: true
-  # grad_clip_norm: clip the global grad norm (cheap insurance vs early adv-grad spikes).
+  # clean_weight: COLLAPSE FIX. Loss = clean_weight*CE(clean) + (1-clean_weight)*CE(adv).
+  # Pure-adversarial loss (clean_weight=0) collapses the pretrained net to a uniform
+  # predictor: its PGD adversarials start at loss ABOVE ln(1000)=6.91, so the optimizer's
+  # easy win is to output uniform and the model craters on clean AND adv. The clean term
+  # is fittable, removes that attractor, and anchors clean accuracy. 0.5 = even mix.
+  clean_weight: 0.5
+  # freeze_bn: pin BN running stats during the training fwd. TRIED as the collapse fix and
+  # it made things WORSE (higher starting loss -> faster collapse). Default False; toggle only.
+  freeze_bn: false
+  # grad_clip_norm: clip the global grad norm (cheap insurance vs gradient spikes).
   # Set to 0 or null to disable.
   grad_clip_norm: 1.0
   pgd_epsilon: 0.03137254901960784   # 8/255 — same as eval threat model
